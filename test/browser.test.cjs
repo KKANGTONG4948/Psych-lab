@@ -259,6 +259,33 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     await page.evaluate(() => window.__st.setChat(undefined, undefined)); await page.waitForTimeout(30);
     ok(!(await page.$('#pl_npc_run')) && !(await page.$('#pl_npc_open')) && /채팅\(1:1 또는 그룹\)을 열면/.test(await page.$eval('.pl-body', e => e.textContent)), '채팅 없음: NPC 화면 대신 홈, 카드에 안내만');
     await page.evaluate(() => window.__st.setChat(1, undefined)); await page.waitForTimeout(30);
+
+    // 7c. 카드 안의 인물 (0.6.0): 신파치 카드의 내장 로어북 항목 '누나'를 대상으로 MFQ-2 → 자료는 그 항목 + 카드 설명만, 기록은 따로
+    await page.waitForSelector('#pl_entry', { timeout: 5000 });   // 이미 홈
+    const opts = await page.$$eval('#pl_entry option', els => els.map(e => e.textContent));
+    ok(opts.length === 3 && /^카드 자체 — 시무라 신파치/.test(opts[0]) && /^누나 · \d+자/.test(opts[1]) && /^도장/.test(opts[2]) && !(await page.$('#pl_entry_filter')), '인물 고르기: 카드 자체 + 내장 항목 2개(누나·도장), 8개 이하라 검색 칸 없음');
+    await page.evaluate(() => { window.__st.calls = []; window.__st.script = (items) => new Function('return ' + window.__good)()(items); const st = window.SillyTavern.getContext().extensionSettings.psych_lab.settings; st.batchSize = 10; st.profileId = ''; });
+    await page.selectOption('#pl_entry', 'embedded:0'); await page.waitForTimeout(40);
+    ok(/시무라 신파치 › 누나/.test(await page.$eval('#pl_sub', e => e.textContent)) && (await page.$eval('.pl-target-name', e => e.textContent)) === '누나' && /로어북 항목/.test(await page.$eval('.pl-target + .pl-field, .pl-target', e => e.parentElement.textContent)) && (await page.$$eval('.pl-chip', els => els.map(e => e.textContent))).filter(x => /완료/.test(x)).length === 0, '인물 고르면 제목·대상 이름이 바뀌고 그 인물의 기록은 비어 있음');
+    await startFirst(page, 0);
+    await page.waitForFunction(() => window.__st.popups.at(-1)?.content.includes('누나'), null, { timeout: 5000 });
+    const ep = await page.evaluate(() => window.__st.popups.at(-1).content);
+    ok(/카드 안의 인물 · 항목 &quot;누나&quot; \+ 카드 설명\(세계관\) · 다른 항목은 안 넣음/.test(ep), '시작 팝업: 카드 안의 인물 안내: ' + ep.slice(0, 160));
+    await page.waitForFunction(() => document.querySelector('.pl-rows'), null, { timeout: 25000 });
+    const esys = (await page.evaluate(() => window.__st.calls))[0].messages[0].content;
+    const emat = JSON.parse(esys.slice(esys.indexOf('[캐릭터 자료]\n') + '[캐릭터 자료]\n'.length));
+    ok(emat.character.name === '누나' && emat.character.description === '오타에는 신파치의 누나다.' && emat.world === '해결사의 일원.' && !emat.lorebook && !esys.includes('코토칸') && !esys.includes('예의 바르고 미숙한') && /자료의 world는/.test(esys), '자료 = 항목 내용 + 카드 설명(세계관)만, 다른 항목·카드 성격 칸·로어북 없음, world 규칙');
+    const es = await page.evaluate(() => window.SillyTavern.getContext().extensionSettings.psych_lab.sessions);
+    ok(es['shinpachi.png#entry:embedded:0']?.mfq2?.status === 'done' && es['shinpachi.png#entry:embedded:0'].mfq2.subject.label === '누나' && es['shinpachi.png']?.mfq2?.status === 'done', '기록은 "카드#entry:항목" 키로 따로, 카드 자체 기록은 그대로');
+    await page.click('.pl-back'); await page.waitForSelector('#pl_entry');
+    await page.selectOption('#pl_entry', ''); await page.waitForTimeout(40);
+    ok((await page.$eval('#pl_sub', e => e.textContent)) === '시무라 신파치' && (await page.$$eval('.pl-chip', els => els.map(e => e.textContent))).filter(x => /완료/.test(x)).length >= 2, '카드 자체로 돌아오면 카드의 기록(완료 2개 이상)이 다시 보임');
+    // 히지카타: 연결 로어북(gintama) 항목 2개(꺼진 항목 제외)가 'book:uid@이름' 키로
+    await page.evaluate(() => window.__st.setChat(0, undefined)); await page.waitForTimeout(60);
+    await page.waitForFunction(() => document.querySelector('#pl_entry'), null, { timeout: 5000 });
+    const hopts = await page.$$eval('#pl_entry option', els => els.map(e => [e.value, e.textContent]));
+    ok(hopts.length === 3 && hopts[1][0] === 'book:1@gintama' && /^진선조/.test(hopts[1][1]) && hopts[2][0] === 'book:2@gintama' && /^마요네즈/.test(hopts[2][1]), '연결 로어북 항목도 목록에(꺼진 항목 제외): ' + JSON.stringify(hopts));
+    await page.evaluate(() => window.__st.setChat(1, undefined)); await page.waitForTimeout(40);
     await page.click('#pl_npc_open'); await page.waitForSelector('#pl_npc_run');   // 입력 화면 (아래 8번이 홈으로)
 
     // 8. back closes

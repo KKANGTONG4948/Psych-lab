@@ -1,13 +1,14 @@
 // 🧠 캐릭터 심리검사 — SillyTavern 확장 (화면)
 // 구조 참고: 깡폰(GGang910/kkang_phone)의 햄버거 메뉴 등록·전체 화면 전환, 봇 테스터(sdafaff346/2bottester2)의 로어북 탐색·설정 저장.
 // 디자인과 평가 방식은 가져오지 않았다. 모델은 점수표를 보지 않고, 채점은 scoring.js가 한다.
-import { settings, save, getSession, deleteSession, createSession, applyCurrentSettings, run, stop, isRunning, estimateTotal, editAnswer, revertAnswer, listProfiles, pendingItems, putSession, itemText } from './engine.js';
+import { settings, save, getSession, deleteSession, createSession, applyCurrentSettings, run, stop, isRunning, estimateTotal, editAnswer, revertAnswer, listProfiles, pendingItems, putSession, itemText, subjectKey, splitSubject, getSubjectEntry, setSubjectEntry } from './engine.js';
+import { listEntries } from './card.js';
 import { TESTS, TEST_BY_ID, PLANNED, AXES, AXIS_BY_ID } from './tests/registry.js';
 import { STRENGTH_LABEL, LEVEL_LABEL, DOMAIN_LEVEL_LABEL } from './scoring.js';
 import { resultOf, shareText, sourceCredit, overview, byAxis, collectLines } from './summary.js';
 import { ARCHETYPES, STRENGTH, KEY_BY_ID, hasChat, listNpcs, getNpcRecord, deleteNpcRecord, loadDraft, saveDraft, chatLog, buildNpcMessages, estimateTokens, generateNpc, editNpcRecord, npcStructure, npcText, parseCode } from './npc.js';
 
-const VERSION = '0.5.2';
+const VERSION = '0.6.0';
 const ROOT_ID = 'psych_lab_root';
 const ctx = () => SillyTavern.getContext();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -37,7 +38,8 @@ const NPC_VIEWS = new Set(['npc', 'npcResult']);
 function safeThumb(avatar) { try { return ctx().getThumbnailUrl('avatar', avatar); } catch { return null; } }
 
 // ───────────────────────── 상태 ─────────────────────────
-const ui = { open: false, view: 'home', avatar: null, testId: null, npcId: null, busy: false, root: null, body: null, historyPushed: false };
+const ui = { open: false, view: 'home', avatar: null, testId: null, npcId: null, busy: false, root: null, body: null, historyPushed: false,
+    entries: { avatar: null, list: [], loading: false }, entryFilter: '' };   // 0.6.0: 카드 안의 인물 목록(카드별 캐시)
 // 본문에 붙일 때 null/undefined는 건너뛴다. (DOM의 append(null)은 글자 'null'을 붙여 버린다 — 0.2.3 휴대폰 제보)
 const mount = (...nodes) => ui.body.append(...nodes.flat().filter(n => n !== null && n !== undefined));
 
@@ -78,8 +80,18 @@ function anyRunning() { return ui.avatar && TESTS.some(t => isRunning(ui.avatar,
 function render() {
     if (!ui.open || !ui.body) return;
     const t = target();
+    // 0.6.0: 검사 대상 = 카드 자체 또는 카드 안의 인물(로어북 항목). 기록 키는 subjectKey. 이름은 인물 라벨.
+    if (t.mode === 'single') {
+        ensureEntries(t.avatar);
+        const entryKey = getSubjectEntry(t.avatar);
+        const entry = entryKey ? ui.entries.list.find(e => e.key === entryKey) : null;
+        if (entryKey && ui.entries.avatar === t.avatar && !ui.entries.loading && !entry) { setSubjectEntry(t.avatar, null); }   // 항목이 사라졌으면 카드 자체로
+        const ek = getSubjectEntry(t.avatar);
+        t.key = subjectKey(t.avatar, ek); t.entry = ek ? (entry || { key: ek, label: Object.values(sessionsFor(t.key)).find(Boolean)?.name || '(인물 읽는 중)' }) : null;
+        t.subjectName = t.entry ? t.entry.label : t.name;
+    }
     // 결과·진행 화면을 보던 중 채팅이 바뀌면 홈으로. 진행 중인 검사는 엔진이 알아서 계속한다. NPC 화면은 채팅이 바뀌어도 그대로(로그만 새로 읽는다).
-    if (t.mode === 'single') { if (ui.avatar !== t.avatar && ui.view !== 'home' && !NPC_VIEWS.has(ui.view)) ui.view = 'home'; ui.avatar = t.avatar; }
+    if (t.mode === 'single') { if (ui.avatar !== t.key && ui.view !== 'home' && !NPC_VIEWS.has(ui.view)) ui.view = 'home'; ui.avatar = t.key; }
     else { ui.avatar = null; if (!NPC_VIEWS.has(ui.view)) ui.view = 'home'; }
     // NPC 화면은 채팅이 열려 있어야 (뽑은 NPC가 그 채팅방에 저장되므로). 채팅을 닫으면 홈으로.
     if (NPC_VIEWS.has(ui.view) && !hasChat()) ui.view = 'home';
@@ -87,7 +99,7 @@ function render() {
     ui.body.replaceChildren();
     if (viewChanged) ui.body.scrollTop = 0;   // 화면이 바뀌면 맨 위부터 (같은 화면 다시 그리기는 자리 유지)
     ui.root.querySelector('.pl-back').style.visibility = ui.view === 'home' ? 'hidden' : 'visible';
-    ui.root.querySelector('#pl_sub').textContent = NPC_VIEWS.has(ui.view) ? `NPC 뽑기 · ${t.name}` : t.mode === 'single' ? t.name : '';
+    ui.root.querySelector('#pl_sub').textContent = NPC_VIEWS.has(ui.view) ? `NPC 뽑기 · ${t.name}` : t.mode === 'single' ? (t.entry ? `${t.name} › ${t.subjectName}` : t.name) : '';
     const img = ui.root.querySelector('#pl_avatar');
     if (t.mode === 'single' && t.thumb) { img.src = t.thumb; img.hidden = false; } else { img.hidden = true; img.removeAttribute('src'); }
     if (ui.view === 'home') renderHome(t);
@@ -96,6 +108,14 @@ function render() {
     else if (ui.view === 'report') renderReport(t);
     else if (ui.view === 'npc') renderNpc(t);
     else if (ui.view === 'npcResult') renderNpcResult(t);
+}
+/** 카드에 연결된 로어북 항목 목록을 한 번 읽어 둔다(카드별 캐시). 다 읽으면 화면을 다시 그린다. */
+function ensureEntries(avatar) {
+    if (ui.entries.avatar === avatar || ui.entries.loading) return;
+    ui.entries = { avatar, list: [], loading: true };
+    listEntries(avatar).then(list => { ui.entries = { avatar, list, loading: false }; })
+        .catch(err => { console.warn('[psych_lab] 인물 목록 읽기 실패', err); ui.entries = { avatar, list: [], loading: false }; })
+        .finally(() => { if (ui.open) render(); });
 }
 /** 홈의 NPC 뽑기 카드. 1:1·그룹 어디서나. 뽑은 NPC는 그 채팅방에 저장되므로 채팅이 열려 있어야 한다. */
 function npcCard() {
@@ -129,7 +149,9 @@ function renderHome(t) {
         el('section', { class: 'pl-card' },
             el('h2', { class: 'pl-h2' }, '검사 대상'),
             el('div', { class: 'pl-target' }, t.thumb ? el('img', { class: 'pl-target-img', src: t.thumb, alt: '' }) : null,
-                el('div', {}, el('div', { class: 'pl-target-name' }, t.name), el('div', { class: 'pl-help' }, '지금 열린 1:1 채팅의 캐릭터예요. 카드 파일: ' + t.avatar))),
+                el('div', {}, el('div', { class: 'pl-target-name' }, t.subjectName),
+                    el('div', { class: 'pl-help' }, t.entry ? `카드 "${t.name}" 안의 인물(로어북 항목${t.entry.chars ? ` · ${t.entry.chars.toLocaleString()}자` : ''}). 이 항목 내용${s.entryWorld !== false ? '과 카드 설명(세계관)' : ''}만 근거로 검사하고, 기록은 인물마다 따로 남아요. 결과는 이 항목 끝에 붙여 넣으면 돼요.` : '지금 열린 1:1 채팅의 캐릭터예요. 카드 파일: ' + t.avatar))),
+            entryPicker(t),
         ),
         ...AXES.map(axis => el('section', { class: 'pl-card' },
             el('h2', { class: 'pl-h2' }, axis.name, el('span', { class: 'pl-h2-sub' }, axis.desc)),
@@ -161,9 +183,35 @@ function renderHome(t) {
             num('응답 토큰 상한', 'maxTokens', 1000, 32000, '기본 4096. 생각(thinking)을 쓰는 모델은 생각 토큰도 여기 포함돼서, 답이 비어 오면 올려 보세요. 묶음이 크면 자동으로 더 올라가요.'),
             num('응답이 틀렸을 때 다시 시도하는 횟수', 'retries', 0, 20, '모델이 정해진 모양으로 답하지 않으면 같은 문항을 이만큼 다시 물어요. 다 써도 안 되면 멈추고 마지막 응답을 보여 줘요.'),
             el('label', { class: 'pl-check' }, el('input', { type: 'checkbox', checked: s.showEstimateAfter ? '' : null, onchange: e => { s.showEstimateAfter = e.target.checked; save(); } }), el('span', {}, '끝났을 때 예상 사용 토큰(어림값) 보여 주기')),
+            el('label', { class: 'pl-check' }, el('input', { type: 'checkbox', id: 'pl_entry_world', checked: s.entryWorld !== false ? '' : null, onchange: e => { s.entryWorld = e.target.checked; save(); render(); } }), el('span', {}, '카드 안의 인물을 검사할 때 카드 설명(세계관)도 배경으로 넣기 (최대 6,000자)')),
         ),
         el('footer', { class: 'pl-foot' }, `v${VERSION} · 오락용 단축 검사. 카드·로어북·RP 설정을 자동으로 바꾸지 않아요.`),
     );
+}
+
+/** 검사 대상 고르기: 카드 자체 / 카드에 연결된 로어북 항목(다인봇의 인물). 항목이 없으면 아무것도 안 그린다. */
+function entryPicker(t) {
+    const E = ui.entries;
+    if (E.loading && E.avatar === t.avatar) return el('p', { class: 'pl-help' }, '카드의 로어북 항목(인물 목록)을 읽는 중…');
+    if (E.avatar !== t.avatar || !E.list.length) return null;
+    const current = getSubjectEntry(t.avatar) || '';
+    const sel = el('select', { class: 'pl-select', id: 'pl_entry', onchange: e => { setSubjectEntry(t.avatar, e.target.value || null); ui.entryFilter = ''; render(); } });
+    const fill = () => {
+        const q = ui.entryFilter.trim().toLowerCase();
+        sel.replaceChildren(el('option', { value: '', selected: !current ? '' : null }, `카드 자체 — ${t.name}`));
+        const books = [...new Set(E.list.map(e => e.book))];
+        for (const b of books) {
+            const items = E.list.filter(e => e.book === b && (!q || e.label.toLowerCase().includes(q) || e.key === current));
+            if (!items.length) continue;
+            sel.append(el('optgroup', { label: `${b} (${E.list.filter(e => e.book === b).length})` }, ...items.map(e => el('option', { value: e.key, selected: e.key === current ? '' : null }, `${e.label} · ${e.chars.toLocaleString()}자`))));
+        }
+    };
+    fill();
+    const filter = el('input', { class: 'pl-input', id: 'pl_entry_filter', type: 'search', placeholder: `이름으로 찾기 (항목 ${E.list.length}개)`, value: ui.entryFilter, oninput: e => { ui.entryFilter = e.target.value; fill(); } });
+    return el('div', { class: 'pl-field pl-entry-picker' },
+        el('span', { class: 'pl-label' }, '누구를 검사하나'),
+        E.list.length > 8 ? filter : null, sel,
+        el('span', { class: 'pl-help' }, '다인봇처럼 인물이 로어북 항목으로 들어 있는 카드는 여기서 한 명을 골라요. 고르면 그 항목만 근거로 검사하고(다른 항목은 안 넣음), 기록·종합 결과·공유용 요약이 인물마다 따로 생겨요. "카드 자체"는 지금까지처럼 카드 5칸 + 연결 로어북으로 검사해요.'));
 }
 
 function sessionsFor(avatar) { return Object.fromEntries(TESTS.map(t => [t.id, getSession(avatar, t.id)])); }
@@ -204,8 +252,8 @@ function testRow(test) {
 async function startTest(testId, resume) {
     const t = target();
     if (t.mode !== 'single') return toast('1:1 채팅을 먼저 열어 주세요.', 'warning');
-    const avatar = t.avatar;
-    if (TESTS.some(x => isRunning(avatar, x.id))) return toast('이 캐릭터의 다른 검사가 진행 중이에요. 끝나거나 멈춘 뒤 시작하세요.', 'warning');
+    const avatar = subjectKey(t.avatar, getSubjectEntry(t.avatar));   // 카드 자체 또는 카드 안의 인물
+    if (TESTS.some(x => isRunning(avatar, x.id))) return toast('이 대상의 다른 검사가 진행 중이에요. 끝나거나 멈춘 뒤 시작하세요.', 'warning');
     try {
         let sess = resume ? getSession(avatar, testId) : null;
         if (!sess) {
@@ -214,13 +262,13 @@ async function startTest(testId, resume) {
                 const ok = await confirmPopup('새로 시작', `이 캐릭터의 기존 ${esc(TEST_BY_ID[testId].short)} 기록(${old.answers.length}문항)을 지우고 새로 시작할까요?`, '새로 시작', '취소');
                 if (!ok) return;
             }
-            toast('카드와 로어북을 읽는 중…');
+            toast(splitSubject(avatar).entryKey ? '인물 항목을 읽는 중…' : '카드와 로어북을 읽는 중…');
             sess = await createSession(avatar, testId);
         } else if (sess.status === 'error') { sess.status = 'paused'; sess.error = null; sess.lastRaw = null; }
         applyCurrentSettings(sess);
         const test = TEST_BY_ID[testId];
         const lore = sess.card.lorebookInfo;
-        const loreLine = lore.mode === 'none' ? '로어북 안 넣음' : `로어북 ${lore.entries}개 항목${lore.truncated ? ' (길어서 일부 생략)' : ''} (${lore.mode === 'constant' ? '상시만' : '전부'})`;
+        const loreLine = lore.mode === 'entry' ? `카드 안의 인물 · 항목 "${lore.label}"${lore.world ? ' + 카드 설명(세계관)' : ''} · 다른 항목은 안 넣음` : lore.mode === 'none' ? '로어북 안 넣음' : `로어북 ${lore.entries}개 항목${lore.truncated ? ' (길어서 일부 생략)' : ''} (${lore.mode === 'constant' ? '상시만' : '전부'})`;
         const left = pendingItems(sess).length;
         const ok = await confirmPopup(resume ? '이어가기' : '검사 시작',
             `<b>${esc(sess.name)}</b> · ${esc(test.name)}<br>${resume ? `남은 문항 ${left}개` : `${test.items.length}문항`} · ${esc(loreLine)}<br><span class="pl-help">문항마다(또는 묶음마다) 모델을 한 번씩 불러요. 캐싱이 안 되는 모델·연결에서는 비용이 클 수 있어요. 시작하면 끝까지 자동으로 진행되고, 중간에 멈출 수 있어요.</span>`,
@@ -331,13 +379,13 @@ function renderReport(t) {
     const groups = byAxis(sessions);
     const total = groups.reduce((n, g) => n + g.tests.length, 0);
     if (!total) return go('home');
-    const sentences = overview(sessions, t.name);
+    const sentences = overview(sessions, t.subjectName || t.name);
     const { splitsByAxis } = collectLines(sessions);
     const editedAll = groups.flatMap(g => g.tests).flatMap(({ session, test }) => session.answers.filter(a => a.edited).map(a => ({ test, item: test.items.find(i => i.id === a.itemId), a })));
     const dateOf = x => new Date(x.session.finishedAt || x.session.createdAt).toLocaleDateString();
     mount(
         el('section', { class: 'pl-card' },
-            el('h2', { class: 'pl-h2' }, `${t.name} · 종합 결과`),
+            el('h2', { class: 'pl-h2' }, `${t.subjectName || t.name} · 종합 결과`),
             el('span', { class: 'pl-help' }, `끝난 검사 ${total}개 · ${groups.flatMap(g => g.tests).map(x => `${x.test.short}(${dateOf(x)})`).join(', ')}`),
             el('h3', { class: 'pl-h3' }, '한눈에'),
             el('div', { class: 'pl-overview' }, ...sentences.map(para => el('div', { class: 'pl-overview-para' }, ...para.map(x => el('p', {}, x))))),

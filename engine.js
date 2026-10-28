@@ -1,6 +1,6 @@
 // 검사 엔진 — 프롬프트 구성, 모델 호출, 응답 검증, 세션 진행. 화면 코드는 없다.
 // v0.1.3 글로벌 스크립트의 원칙을 그대로 옮겼다: 카드 사본 고정, 점수표 비공개, 엄격한 응답 검증, 임의 채움 금지.
-import { loadCardProfile, loadLorebookText } from './card.js';
+import { loadCardProfile, loadLorebookText, loadEntryProfile } from './card.js';
 import { TEST_BY_ID } from './tests/registry.js';
 
 const ctx = () => SillyTavern.getContext();
@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     delayMs: 250,           // 호출 사이 쉬는 시간
     showEstimateAfter: false, // 끝났을 때 예상 사용 토큰(어림값) 표시
     portraitGender: 'm',    // Schwartz PVQ40 초상문 남성판('m')/여성판('f'). 캐릭터에 맞춰 고른다
+    entryWorld: true,       // 0.6.0: 카드 안 인물(로어북 항목)을 검사할 때 카드 설명(세계관)을 배경으로 같이 넣는다
 });
 
 // ───────────────────────── 저장 ─────────────────────────
@@ -33,10 +34,19 @@ export function store() {
     // 0.2.3: 응답 상한 700 → 4096 (묶음 5 + 생각 토큰 때문에 700으로는 답이 비어서 옴). 직접 바꾼 적 없으면 따른다.
     if (!s[MODULE].settings.maxTokensTouched && s[MODULE].settings.maxTokens < DEFAULT_SETTINGS.maxTokens) s[MODULE].settings.maxTokens = DEFAULT_SETTINGS.maxTokens;
     s[MODULE].sessions ||= {};
+    s[MODULE].subjects ||= {};   // 0.6.0: 카드마다 고른 '카드 안의 인물' { [avatar]: entryKey }
     return s[MODULE];
 }
 export const settings = () => store().settings;
 export function save() { ctx().saveSettingsDebounced(); }
+
+// ───────────────────────── 검사 대상 키 (0.6.0) ─────────────────────────
+// 카드 자체: 'shinpachi.png'. 카드 안의 인물(로어북 항목): 'card.png#entry:embedded:3' — 기록은 이 키로 따로 쌓인다.
+export const ENTRY_SEP = '#entry:';
+export const subjectKey = (avatar, entryKey) => entryKey ? avatar + ENTRY_SEP + entryKey : avatar;
+export function splitSubject(key) { const i = String(key).indexOf(ENTRY_SEP); return i < 0 ? { avatar: key, entryKey: null } : { avatar: key.slice(0, i), entryKey: key.slice(i + ENTRY_SEP.length) }; }
+export function getSubjectEntry(avatar) { return store().subjects[avatar] || null; }
+export function setSubjectEntry(avatar, entryKey) { const r = store(); if (entryKey) r.subjects[avatar] = entryKey; else delete r.subjects[avatar]; save(); }
 
 export function getSession(avatar, testId) { return store().sessions[avatar]?.[testId] ?? null; }
 export function putSession(session) {
@@ -98,13 +108,15 @@ export function itemText(test, item, session) {
     return test.portraitGender && g === 'f' && item.textF ? item.textF : item.text;
 }
 
+const WORLD_RULE = '자료의 world는 이 인물이 사는 세계·조직·규칙의 설명이다. 인물의 판단 기준을 이해하는 배경으로만 쓰고, 세계 설명 자체나 거기 나오는 다른 인물을 이 인물의 성격으로 삼지 않는다.';
 export function buildMessages(session, items) {
     const test = TEST_BY_ID[session.testId];
     const questions = items.map(i => test.format === 'likert' ? { id: i.id, text: itemText(test, i, session) } : { id: i.id, left: i.left, right: i.right });
     const material = { character: session.card.profile };
+    if (session.card.world) material.world = session.card.world;
     if (session.card.lorebook) material.lorebook = session.card.lorebook;
     return [
-        { role: 'system', content: SYSTEM_RULES + '\n\n' + formatRules(test, items.length) + '\n\n[캐릭터 자료]\n' + JSON.stringify(material) },
+        { role: 'system', content: SYSTEM_RULES + (session.card.world ? '\n' + WORLD_RULE : '') + '\n\n' + formatRules(test, items.length) + '\n\n[캐릭터 자료]\n' + JSON.stringify(material) },
         { role: 'user', content: JSON.stringify({ questions }) + '\n' + (items.length === 1 ? '제시된 현재 문항에 대한 JSON 응답 하나를 작성하세요.' : `제시된 ${items.length}개 문항에 대한 JSON 배열을 작성하세요.`) },
     ];
 }
@@ -178,16 +190,27 @@ export function listProfiles() {
 }
 
 // ───────────────────────── 세션 ─────────────────────────
-export async function createSession(avatar, testId) {
+export async function createSession(key, testId) {
     const test = TEST_BY_ID[testId] || fail('알 수 없는 검사: ' + testId);
-    const { profile, card } = await loadCardProfile(avatar);
     const s = settings();
-    const lore = await loadLorebookText(card, s.lorebook, s.lorebookMaxChars);
+    const { avatar, entryKey } = splitSubject(key);
+    let profile, cardData, subject = null;
+    if (entryKey) {
+        // 카드 안의 인물: 항목 내용 한 명 + (설정이 켜져 있으면) 카드 설명을 세계관으로. 다른 항목·로어북은 넣지 않는다.
+        const r = await loadEntryProfile(avatar, entryKey, { includeWorld: s.entryWorld !== false });
+        profile = r.profile; subject = { avatar, entryKey, label: r.entry.label, book: r.entry.book, cardName: r.cardName };
+        cardData = { profile, world: r.world, lorebook: null, lorebookInfo: { mode: 'entry', books: [r.entry.book], entries: 1, truncated: false, label: r.entry.label, world: !!r.world } };
+    } else {
+        const r = await loadCardProfile(avatar);
+        profile = r.profile;
+        const lore = await loadLorebookText(r.card, s.lorebook, s.lorebookMaxChars);
+        cardData = { profile, lorebook: lore.text || null, lorebookInfo: { mode: s.lorebook, books: lore.books, entries: lore.entries, truncated: lore.truncated } };
+    }
     const session = {
         id: ctx().uuidv4?.() ?? String(Date.now()),
         version: STATE_VERSION, testId, testVersion: test.version,
-        avatar, name: profile.name,
-        card: { profile, lorebook: lore.text || null, lorebookInfo: { mode: s.lorebook, books: lore.books, entries: lore.entries, truncated: lore.truncated } },
+        avatar: key, name: profile.name, subject,
+        card: cardData,
         settings: { profileId: s.profileId, batchSize: s.batchSize, maxTokens: s.maxTokens, portraitGender: s.portraitGender },
         answers: [],            // {itemId, score, reason, edited?: {score, at}}
         status: 'ready',        // ready | running | paused | done | error

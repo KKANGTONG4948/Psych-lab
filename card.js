@@ -87,3 +87,62 @@ export async function loadLorebookText(card, mode = 'constant', maxChars = 6000)
     const truncated = full.length > maxChars;
     return { text: truncated ? full.slice(0, maxChars) + '\n…(이하 생략)' : full, books: books.map(b => b.name), entries: items.length, truncated };
 }
+
+// ───────────────────────── 카드 안의 인물 (0.6.0) ─────────────────────────
+// 다인봇: 카드 한 장에 세계관만 있고 인물은 로어북 항목 하나씩인 구조. 항목 하나를 "검사 대상"으로 고른다.
+// 자료 = 그 항목의 내용(한 명) + 카드 설명(세계관, 설정으로 끌 수 있음). 다른 항목은 넣지 않는다 — "단 한 명만 근거" 원칙.
+export const WORLD_MAX_CHARS = 6000;
+const entryLabel = e => String(e.comment || (Array.isArray(e.key) ? e.key[0] : Array.isArray(e.keys) ? e.keys[0] : '') || `#${e.uid ?? ''}`).trim();
+
+/**
+ * 카드에 연결된 모든 로어북 항목 목록(켜진 것, 내용 있는 것). [{ key, label, book, kind, constant, chars }]
+ * key: 'embedded:<번호>' 또는 'book:<uid>@<책 이름>'. 세션 저장 키에 쓰인다.
+ */
+export async function listEntries(avatar) {
+    const c = ctx();
+    const index = c.characters.findIndex(ch => ch.avatar === avatar);
+    if (index < 0) return [];
+    try { await c.unshallowCharacter(String(index)); } catch { /* 이미 읽혔을 수 있음 */ }
+    const card = c.characters[index];
+    const out = [];
+    const embedded = card?.data?.character_book?.entries || [];
+    embedded.forEach((e, i) => {
+        if (e.enabled === false || !String(e.content || '').trim()) return;
+        out.push({ key: `embedded:${i}`, label: entryLabel(e), book: card.data.character_book.name || '카드 내장 로어북', kind: 'embedded', constant: !!e.constant, chars: String(e.content).trim().length });
+    });
+    for (const b of (await linkedBooks(card)).filter(x => x.kind === 'linked')) {
+        try {
+            for (const e of Object.values((await c.loadWorldInfo(b.name))?.entries || {})) {
+                if (e.disable || !String(e.content || '').trim()) continue;
+                out.push({ key: `book:${e.uid}@${b.name}`, label: entryLabel(e), book: b.name, kind: 'linked', constant: !!e.constant, chars: String(e.content).trim().length });
+            }
+        } catch (err) { console.warn('[psych_lab] 로어북 읽기 실패', b.name, err); }
+    }
+    return out;
+}
+
+/** 고른 항목 하나를 "캐릭터 자료"로. profile.description = 항목 내용. world = 카드 설명(세계관). */
+export async function loadEntryProfile(avatar, entryKey, { includeWorld = true } = {}) {
+    const c = ctx();
+    const index = c.characters.findIndex(ch => ch.avatar === avatar);
+    if (index < 0) throw new Error('선택한 카드를 찾을 수 없습니다.');
+    try { await c.unshallowCharacter(String(index)); } catch { /* ignore */ }
+    const card = c.characters[index];
+    let entry = null, book = '';
+    if (entryKey.startsWith('embedded:')) {
+        const i = Number(entryKey.slice('embedded:'.length));
+        entry = card?.data?.character_book?.entries?.[i] ?? null; book = card?.data?.character_book?.name || '카드 내장 로어북';
+    } else if (entryKey.startsWith('book:')) {
+        const rest = entryKey.slice('book:'.length); const at = rest.indexOf('@');
+        const uid = rest.slice(0, at); book = rest.slice(at + 1);
+        const wi = await c.loadWorldInfo(book);
+        entry = Object.values(wi?.entries || {}).find(e => String(e.uid) === uid) ?? null;
+    }
+    if (!entry || entry.enabled === false || entry.disable || !String(entry.content || '').trim()) throw new Error('고른 인물 항목을 찾을 수 없습니다(꺼졌거나 비었을 수 있어요). 로어북이 바뀌었으면 인물을 다시 골라 주세요.');
+    const label = entryLabel(entry);
+    const profile = { name: label, description: String(entry.content).trim(), personality: '', scenario: '', dialogue_examples: '' };
+    const data = card.data || {};
+    const desc = typeof data.description === 'string' ? data.description : typeof card.description === 'string' ? card.description : '';
+    const world = includeWorld && desc.trim() ? (desc.length > WORLD_MAX_CHARS ? desc.slice(0, WORLD_MAX_CHARS) + '\n…(이하 생략)' : desc) : null;
+    return { profile, world, entry: { key: entryKey, label, book, chars: profile.description.length }, cardName: card.name };
+}

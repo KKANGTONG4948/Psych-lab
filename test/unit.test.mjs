@@ -329,3 +329,42 @@ test('NPC 기록은 채팅 메타데이터에(0.5.1): 채팅마다 따로, 채�
     await assert.rejects(npc.generateNpc({ name: '누구', notes: '설정' }), /채팅을 열어야/);
     globalThis.SillyTavern.getContext = prevCtx;
 });
+
+test('카드 안의 인물(0.6.0): 대상 키, 항목 목록, 항목 하나 + 세계관만 자료로, 세계관 끄기', async () => {
+    const { subjectKey, splitSubject, createSession, buildMessages, store } = await import('../engine.js');
+    const { listEntries, loadEntryProfile } = await import('../card.js');
+    assert.equal(subjectKey('a.png', null), 'a.png'); assert.equal(subjectKey('a.png', 'embedded:3'), 'a.png#entry:embedded:3');
+    assert.deepEqual(splitSubject('a.png#entry:book:7@은혼 설정'), { avatar: 'a.png', entryKey: 'book:7@은혼 설정' }); assert.deepEqual(splitSubject('a.png'), { avatar: 'a.png', entryKey: null });
+    const prevCtx = globalThis.SillyTavern.getContext;
+    const es = {};
+    const characters = [{ avatar: 'rpg.png', name: '닌자 학원 RPG', shallow: false, data: { description: '세계관: 인술학원. '.repeat(10), personality: '', scenario: '', mes_example: '', extensions: { world: 'extra' },
+        character_book: { name: '닌타마', entries: [
+            { keys: ['6학년', '센조'], comment: '타치바나 센조', content: '6학년 이반. 냉정하고 성실하다.', constant: true, enabled: true },
+            { keys: ['란타로'], comment: '', content: '1학년 로반. 성실하고 눈이 나쁘다.', constant: true, enabled: true },
+            { keys: ['꺼짐'], comment: '꺼진 항목', content: '안 보여야 함', constant: true, enabled: false },
+            { keys: ['빈'], comment: '빈 항목', content: '   ', constant: true, enabled: true }] } } }];
+    const worlds = { extra: { entries: { 5: { uid: 5, key: ['도이'], comment: '도이 한스케', content: '1학년 담임.', disable: false }, 6: { uid: 6, key: ['x'], content: '꺼짐', disable: true } } } };
+    const fixed = { extensionSettings: es, saveSettingsDebounced() {}, uuidv4: () => 'u1', characters, characterId: 0, unshallowCharacter: async () => {}, loadWorldInfo: async n => worlds[n], worldInfo: { charLore: [] } };
+    globalThis.SillyTavern.getContext = () => fixed;
+    const list = await listEntries('rpg.png');
+    assert.deepEqual(list.map(e => [e.key, e.label, e.kind]), [['embedded:0', '타치바나 센조', 'embedded'], ['embedded:1', '란타로', 'embedded'], ['book:5@extra', '도이 한스케', 'linked']], '켜진 항목만, 라벨은 comment → 첫 키, 연결 로어북 포함');
+    const r = await loadEntryProfile('rpg.png', 'embedded:1');
+    assert.equal(r.profile.name, '란타로'); assert.equal(r.profile.description, '1학년 로반. 성실하고 눈이 나쁘다.'); assert.ok(r.world.startsWith('세계관: 인술학원.')); assert.equal(r.entry.book, '닌타마');
+    const r2 = await loadEntryProfile('rpg.png', 'book:5@extra', { includeWorld: false });
+    assert.equal(r2.profile.name, '도이 한스케'); assert.equal(r2.world, null);
+    await assert.rejects(loadEntryProfile('rpg.png', 'embedded:2'), /찾을 수 없습니다/, '꺼진 항목은 못 고름');
+    // 세션: 키는 합성, 자료는 항목 + world, 다른 항목·로어북 없음
+    const sess = await createSession('rpg.png#entry:embedded:1', 'mfq2');
+    assert.equal(sess.avatar, 'rpg.png#entry:embedded:1'); assert.equal(sess.name, '란타로'); assert.equal(sess.subject.label, '란타로'); assert.equal(sess.card.lorebookInfo.mode, 'entry'); assert.equal(sess.card.lorebook, null);
+    const { MFQ2 } = await import('../tests/mfq2.js');
+    const sys = buildMessages(sess, MFQ2.items.slice(0, 1))[0].content;
+    const mat = JSON.parse(sys.slice(sys.indexOf('[캐릭터 자료]\n') + '[캐릭터 자료]\n'.length));
+    assert.equal(mat.character.description, '1학년 로반. 성실하고 눈이 나쁘다.'); assert.ok(mat.world && !mat.lorebook && !sys.includes('타치바나') && !sys.includes('도이') && sys.includes('자료의 world는'));
+    assert.ok(store().sessions['rpg.png#entry:embedded:1'].mfq2, '기록은 합성 키 아래');
+    // 설정으로 세계관 끄면 world 없음·규칙 문장도 없음
+    store().settings.entryWorld = false;
+    const sess2 = await createSession('rpg.png#entry:embedded:0', 'mfq2');
+    const sys2 = buildMessages(sess2, MFQ2.items.slice(0, 1))[0].content;
+    assert.ok(!sess2.card.world && !sys2.includes('"world"') && !sys2.includes('자료의 world는'));
+    globalThis.SillyTavern.getContext = prevCtx;
+});

@@ -187,3 +187,6 @@ html.pl-lock, html.pl-lock body { overflow: hidden !important; }
 #psych_lab_root .pl-npc-code { font-size: 12px; color: var(--pl-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #psych_lab_root .pl-npc-name .pl-help { font-weight: 400; }
 #psych_lab_root .pl-textarea:focus, #psych_lab_root .pl-input:focus, #psych_lab_root .pl-select:focus { outline: 2px solid #aab6ea; outline-offset: 0; }
+/* 0.6.0 — 카드 안의 인물 고르기 */
+#psych_lab_root .pl-entry-picker { padding-top: 8px; border-top: 1px dashed var(--pl-line); }
+#psych_lab_root .pl-entry-picker select { max-width: 100%; }
