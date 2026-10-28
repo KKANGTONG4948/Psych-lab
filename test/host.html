@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ST mock host</title>
+<link rel="stylesheet" href="/scripts/extensions/third-party/psych-lab/style.css">
+<style>body{margin:0;font-family:system-ui}#options{display:none}.popup{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4);z-index:2147483600}.popup-inner{background:#fff;padding:16px;border-radius:12px;max-width:90vw}</style>
+</head><body>
+<div id="chat"></div>
+<div id="options"><div class="options-content"><a id="option_settings"><span>Settings</span></a></div></div>
+<div id="extensionsMenu"></div>
+<script>
+// ── SillyTavern mock. Shapes follow public/scripts/st-context.js @06bde939. ──
+window.__st = {
+  calls: [],               // every model call: {messages, profileId, maxTokens}
+  script: null,            // function(items[]) → raw response string; set by the test
+  popups: [],              // every popup: {content, options}
+  popupAnswer: 1,          // POPUP_RESULT to return (1 = AFFIRMATIVE, 0 = NEGATIVE)
+  inputAnswer: '마을 대장장이', // INPUT 팝업이 돌려줄 문자열 (실제 ST는 입력값 문자열, 취소면 false/null)
+  settingsSaved: 0,
+  toasts: [],
+  stopped: 0,
+};
+const extension_settings = { disabledExtensions: [], connectionManager: { profiles: [{ id: 'p1', name: '저렴한 모델', api: 'openai', mode: 'cc' }] } };
+const characters = [
+  { avatar: 'hijikata.png', name: '히지카타 토시로', shallow: true, data: { description: '진선조 부장. 마요네즈를 좋아한다.', personality: '무뚝뚝하지만 부하를 아낀다. 규칙을 중시한다.', scenario: '에도 시대 AU.', mes_example: '<START>\n“……시끄럽다.”', extensions: { world: 'gintama' } } },
+  { avatar: 'shinpachi.png', name: '시무라 신파치', shallow: false, data: { description: '해결사의 일원.', personality: '예의 바르고 미숙한 청년.', scenario: '', mes_example: '', extensions: {}, character_book: { name: '내장북', entries: [{ keys: ['누나'], content: '오타에는 신파치의 누나다.', constant: true, enabled: true }, { keys: ['도장'], content: '코토칸 도장은 몰락했다.', constant: false, enabled: true }] } } },
+];
+const worlds = { gintama: { entries: { 1: { uid: 1, key: ['진선조'], comment: '진선조', content: '막부 직속 경찰 조직.', constant: true, disable: false }, 2: { uid: 2, key: ['마요'], comment: '마요네즈', content: '히지카타는 모든 음식에 마요네즈를 뿌린다.', constant: false, disable: false }, 3: { uid: 3, key: ['x'], content: '꺼진 항목', constant: true, disable: true } } } };
+let shallowLoads = 0;
+const extractItems = messages => { const u = messages.find(m => m.role === 'user'); if (!u.content.startsWith('{"questions"')) return []; return JSON.parse(u.content.split('\n')[0]).questions; };   // NPC 뽑기 호출은 문항이 없다 → []
+const POPUP_TYPE = { TEXT: 1, CONFIRM: 2, INPUT: 3, DISPLAY: 4 };
+const POPUP_RESULT = { AFFIRMATIVE: 1, NEGATIVE: 0, CANCELLED: null };
+const listeners = {};
+const chat = [
+  { name: 'User', is_user: true, mes: '모르간, 이번 거래는 어떻게 되는 거지?' },
+  { name: '긴토키', is_user: false, mes: '<b>모르간</b>은 웃으며 말했다. "손해 보는 장사는 안 합니다. 하지만 당신들에겐… 특별히."' },
+  { name: 'User', is_user: true, is_system: true, mes: '(숨긴 메시지)' },
+  { name: '카구라', is_user: false, mes: '모르간 아저씨, 그 웃음 수상한데.' },
+];
+const context = {
+  characters, characterId: 0, groupId: undefined, name1: 'User', chat, chatId: 'chat-0', groups: [{ id: 'g1', name: '은혼 그룹챗' }],
+  chatMetadata: {}, saveMetadataDebounced: () => { window.__st.metaSaved = (window.__st.metaSaved || 0) + 1; },   // 채팅마다 다른 객체 (setChat에서 바꿈)
+  getThumbnailUrl: (type, file) => `/thumbnail?type=${type}&file=${encodeURIComponent(file)}`,
+  eventSource: { on: (ev, fn) => { (listeners[ev] ||= []).push(fn); } }, event_types: { CHAT_CHANGED: 'chat_id_changed' },
+  extensionSettings: extension_settings,
+  saveSettingsDebounced: () => { window.__st.settingsSaved++; },
+  unshallowCharacter: async id => { shallowLoads++; characters[Number(id)].shallow = false; },
+  uuidv4: () => 'uuid-' + Math.random().toString(16).slice(2),
+  loadWorldInfo: async name => worlds[name],
+  getTokenCountAsync: async text => Math.ceil(text.length / 3),
+  stopGeneration: () => { window.__st.stopped++; },
+  callGenericPopup: async (content, type, input, options) => { window.__st.popups.push({ content, type, input, options }); await new Promise(r => setTimeout(r, 10)); return type === POPUP_TYPE.INPUT ? window.__st.inputAnswer : window.__st.popupAnswer; },
+  POPUP_TYPE, POPUP_RESULT,
+  generateRaw: async ({ prompt, responseLength }) => {
+    window.__st.calls.push({ messages: prompt, profileId: '', maxTokens: responseLength });
+    await new Promise(r => setTimeout(r, window.__st.delay || 20));
+    return window.__st.script(extractItems(prompt), window.__st.calls.length);
+  },
+  ConnectionManagerRequestService: {
+    getSupportedProfiles: () => extension_settings.connectionManager.profiles,
+    sendRequest: async (profileId, messages, maxTokens, custom) => {
+      window.__st.calls.push({ messages, profileId, maxTokens, custom });
+      await new Promise(r => setTimeout(r, 20));
+      if (custom.signal?.aborted) throw new Error('aborted');
+      return { content: window.__st.script(extractItems(messages), window.__st.calls.length) };
+    },
+  },
+};
+window.SillyTavern = { getContext: () => context };
+window.toastr = { info: m => window.__st.toasts.push(['info', m]), success: m => window.__st.toasts.push(['success', m]), warning: m => window.__st.toasts.push(['warning', m]), error: m => window.__st.toasts.push(['error', m]) };
+window.$ = sel => ({ fadeOut() {} });
+window.__st.shallowLoads = () => shallowLoads;
+const metas = {};
+window.__st.setChat = (characterId, groupId) => { context.characterId = characterId; context.groupId = groupId; const none = characterId === undefined && !groupId; context.chat = none ? [] : chat; context.chatId = none ? undefined : (groupId ? 'chat-' + groupId : 'chat-' + characterId); context.chatMetadata = none ? {} : (metas[context.chatId] ||= {}); (listeners['chat_id_changed'] || []).forEach(fn => fn()); };
+metas['chat-0'] = context.chatMetadata;
+</script>
+<script type="module" src="/scripts/extensions/third-party/psych-lab/index.js"></script>
+</body></html>

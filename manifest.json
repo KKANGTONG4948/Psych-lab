@@ -1,0 +1,11 @@
+{
+    "display_name": "캐릭터 심리검사 (Psych Lab)",
+    "loading_order": 100,
+    "requires": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "kkang",
+    "version": "0.5.2",
+    "homePage": "https://github.com/KKANGTONG4948/Psych-lab",
+    "auto_update": false
+}
