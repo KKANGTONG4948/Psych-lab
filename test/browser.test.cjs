@@ -149,7 +149,7 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     await page.click('.pl-card:nth-of-type(4) .pl-btn');
     await page.waitForSelector('.pl-overview');
     const heads = await page.$$eval('section.pl-card > .pl-h2', els => els.map(e => e.firstChild.textContent));
-    ok(heads.join() === '히지카타 토시로 · 종합 결과,가치관,성격,내가 고친 것,공유용 요약,출처', '종합 결과: 한눈에 → 가치관(갈리는 곳 포함) → 성격(갈리는 곳 포함) → 내가 고친 것 → 공유 문구 → 출처: ' + heads.join());
+    ok(heads.join() === '히지카타 토시로 · 종합 결과,가치관,성격,내가 고친 것,공유용 요약,GID용 요약,출처', '종합 결과: 한눈에 → 가치관(갈리는 곳 포함) → 성격(갈리는 곳 포함) → 내가 고친 것 → 공유 문구 → GID용 → 출처: ' + heads.join());
     ok((await page.$$('.pl-report-splits')).length === 2 && (await page.$$eval('.pl-report-splits', els => els.map(e => e.closest('section').querySelector('.pl-h2').firstChild.textContent))).join() === '가치관,성격', '갈리는 곳이 가치관·성격 칸 안에 각각');
     ok((await page.$$('.pl-overview p')).length >= 2 && (await page.$$('.pl-report-test')).length === 5 && (await page.$$('.pl-report-test .pl-rows')).length === 5, '한눈에 문장 2개 이상, 검사 5개가 축별로 들어감');
     ok((await page.$$('.pl-report-test .pl-row')).length === 6 + 14 + 5 + 1 + 5 && (await page.$$('.pl-report-test .pl-facets')).length === 0 && (await page.$$('.pl-report-test .pl-chip-f')).length >= 1, '종합 결과는 압축: 기반 6 + 가치 10·방향 4 + 영역 5 + 정직-겸손 1 + 강점 5 = 31줄, 세부 막대 없음, 두드러진 세부는 칩');
@@ -159,6 +159,11 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     await page.click('.pl-back');
     const share = await page.$eval('#pl_share_preview', e => e.textContent);
     ok(/\[가치관 — 반응하는 일\]\n- /.test(share) && /\[가치관 — 넘어가는 일\]\n/.test(share) && /\[성격 — 반응 모양\]\n- .*\(Big Five Neuroticism/.test(share) && /\[가치관 — 갈리는 곳\]\n- /.test(share) && /\[성격 — 갈리는 곳\]\n- /.test(share) && !/환산|MBTI|에니어그램|IPC|대인 자세/.test(share) && /\(HEXACO Honesty-Humility/.test(share) && /\(VIA( \w+ (높음|낮음))?\)/.test(share) && /\(Schwartz/.test(share) && !/\n\[갈리는 곳\]/.test(share), '공유용 요약: 다섯 검사 모두, 짧은 꼬리표, 환산 없음, 갈리는 곳은 축 안에');
+    // GID용 복사 (0.6.1): 줄마다 빈 줄, [축 - 칸] 접두, ※ 없음; 클립보드에 그대로
+    await page.evaluate(() => { navigator.clipboard.writeText = t => { window.__copied = t; return Promise.resolve(); }; });
+    await page.click('#pl_copy_gid'); await page.waitForTimeout(40);
+    const gid = await page.evaluate(() => window.__copied);
+    ok(gid.startsWith('[캐릭터 심리검사 요약]\n\n[가치관 - 반응하는 일] ') && gid.includes('\n\n[성격유형 - 반응 모양] ') && !gid.includes('※') && !gid.includes('\n- ') && gid.split('\n\n').slice(1).every(l => /^\[(가치관|성격유형) - /.test(l)) && gid === (await page.$eval('#pl_gid_preview', e => e.textContent)), 'GID용 복사: 접두·빈 줄·※ 없음, 미리 보기와 동일');
     ok(!/\[강도\]/.test(share) && !/층/.test(share) && !/Moral Foundations|IPIP-NEO|Character Strengths|세부:/.test(share) && !/(↑|↓)[^()\n]*(↑|↓)[^()\n]*(↑|↓)/.test(share), '공유용 요약: 강도·층·긴 이론명 없음, 세부는 화살표 최대 2개');
 
     // 6. retries: bad output → 6 calls (1 + 5 retries), lastRaw saved only at the end
@@ -234,6 +239,13 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     ok((await page.$$('.pl-tok-archetype')).length === 3 && (await page.$$('.pl-tok-diff')).length === 4 && /전형 3칸/.test(await page.$eval('.pl-src', e => e.textContent)) && /겹치지 않게 4칸/.test(await page.$eval('.pl-src', e => e.textContent)) && /겹침: 한스와 \d칸/.test(await page.$eval('.pl-body', e => e.textContent)), '전형 3칸(노란)·겹치지 않게 4칸(초록)·겹침 수');
     const rec1 = await page.evaluate(() => window.SillyTavern.getContext().chatMetadata.psych_lab.npcs[0]);
     ok(rec1.name === '모르간' && rec1.labels['hexaco.H1'] === 'low' && rec1.source['hexaco.H1'] === 'archetype' && rec1.labels['mfq2.proportionality'] === 'high' && rec1.source['mfq2.proportionality'] === 'material' && rec1.labels['bigfive.E'] === 'mid' && rec1.chatId === 'chat-g1' && (await page.evaluate(() => window.__st.metaSaved)) >= 1 && !(await page.evaluate(() => window.SillyTavern.getContext().extensionSettings.psych_lab.npcs)), 'NPC 기록: 채팅 메타데이터(chat_metadata.psych_lab)에 저장, 확장 설정에는 없음');
+    // GID용 복사 (0.6.2, B안): 첫 줄 그대로 + 라벨을 문장으로, 줄마다 빈 줄, [축 - 칸] 접두, 화살표 없음; 미리 보기와 동일; 세 줄 복사는 그대로
+    await page.evaluate(() => { navigator.clipboard.writeText = t => { window.__copied = t; return Promise.resolve(); }; window.__copied = null; });
+    await page.click('#pl_npc_copy_gid'); await page.waitForTimeout(40);
+    const ngid = await page.evaluate(() => window.__copied);
+    ok(ngid.startsWith('[모르간] 상인 길드장, 40대. 겉으로는 일행의 후원자. 말투: 정중한 존댓말, 끝을 흐림.\n\n[가치관 - 반응하는 일] ') && /\n\n\[가치관 - 반응하는 일\] 노력·공로만큼 보상받지 못하거나 속임수가 통하는 장면: 바로잡으려 하고, 속인 쪽이 벌 받길 바란다 \(MFQ-2 Proportionality 중시\)/.test(ngid) && /\n\n\[성격유형 - 반응 모양\] 할 말은 하고 쉽게 양보하지 않는다 \(Big Five Agreeableness 낮음\)/.test(ngid) && /\(HEXACO Sincerity 낮음\)/.test(ngid) && !/[↑↓※]/.test(ngid) && ngid.split('\n\n').slice(1).every(l => /^\[(가치관|성격유형) - /.test(l)) && ngid === (await page.$eval('#pl_npc_gid_preview', e => e.textContent)), 'NPC GID용 복사: ' + String(ngid).slice(0, 200).replace(/\n/g, '|'));
+    await page.click('#pl_npc_copy'); await page.waitForTimeout(40);
+    ok((await page.evaluate(() => window.__copied)) === lines.replace(/\s+$/, '') || /^\[모르간\].*\n가치관: .*\n성격: /.test(await page.evaluate(() => window.__copied)), '세 줄 복사는 그대로 세 줄');
     // 첫 줄 고치기: INPUT 팝업 두 번(자리 → 말투), 라벨은 그대로
     await page.evaluate(() => { window.__st.inputAnswer = '마을 유일한 대장장이'; });
     await (await page.$$('.pl-actions .pl-btn-ghost'))[1].click(); await page.waitForTimeout(80);

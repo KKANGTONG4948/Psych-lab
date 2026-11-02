@@ -40,19 +40,26 @@ export function resultLine(session) {
 }
 
 /**
- * 검사 하나 → 공유 문구 조각. { react, skip, shape, splits }
- * react/skip = 가치관(반응하는 일 / 넘어가는 일), shape = 성격(반응 모양), splits = 갈리는 곳(중간·경계).
+ * 검사 하나 → 공유 문구 조각. { react, skip, direction, shape, splits }
+ * react/skip = 가치관(반응하는 일 / 넘어가는 일), direction = 가치 방향(Schwartz 4방향), shape = 성격(반응 모양), splits = 갈리는 곳(중간·경계).
+ * plain(0.6.1, GID용): 갈리는 곳·가치 방향에 "살짝 기움" 화살표를 쓰지 않는다 — GID 읽기 규칙의 ↑↓(반응/넘김)와 뜻이 달라 헷갈려서.
  */
-export function shareLines(session) {
+export function shareLines(session, { plain = false } = {}) {
     const { test, score } = resultOf(session);
     const tag = test.tag || test.short;
-    const out = { react: [], skip: [], shape: [], splits: [] };
+    const out = { react: [], skip: [], direction: [], shape: [], splits: [] };
     const arrows = list => list.map(f => `${f.name}${f.level === 'high' ? '↑' : '↓'}`).join(' ');
+    const lean = (name, ratio) => plain || Math.abs(ratio) < 0.15 ? name : `${name}${ratio > 0 ? '↑' : '↓'}`;
     if (score.kind === 'profile') {
         for (const c of score.high) out.react.push(`${c.high.cond}: ${c.high.react} (${tag} ${c.en} ${LEVEL_LABEL.high}${c.strength === 'clear' ? '·뚜렷' : ''})`);
         for (const c of score.low) out.skip.push(`${c.low.cond ? c.low.cond + ': ' : ''}${c.low.react} (${tag} ${c.en} 낮음)`);
-        if (score.mid.length) out.splits.push(`${score.mid.map(m => Math.abs(m.ratio) >= 0.15 ? `${m.name}${m.ratio > 0 ? '↑' : '↓'}` : m.name).join(' ')} 는 중간 — 상황 따라 반응하거나 넘김 (${tag})`);
-        if (score.higher?.length && score.higher.some(h => h.level !== 'none')) out.react.push(`가치 방향(센 순): ${score.higher.filter(h => h.level !== 'none').map(h => `${h.name}(${h.en})${h.level === 'high' ? '↑' : h.level === 'low' ? '↓' : ''}`).join(' > ')} (${tag} 4방향)`);
+        if (score.mid.length) out.splits.push(plain
+            ? `${score.mid.map(m => m.name).join('·')}${eunNeun(score.mid.at(-1).name)} 중간 — 상황 따라 반응하거나 넘김 (${tag})`
+            : `${score.mid.map(m => lean(m.name, m.ratio)).join(' ')} 는 중간 — 상황 따라 반응하거나 넘김 (${tag})`);
+        if (score.higher?.length && score.higher.some(h => h.level !== 'none')) {
+            const list = score.higher.filter(h => h.level !== 'none').map(h => `${h.name}(${h.en})${plain ? '' : h.level === 'high' ? '↑' : h.level === 'low' ? '↓' : ''}`).join(' > ');
+            out.direction.push(`${plain ? '센 순: ' : '가치 방향(센 순): '}${list} (${tag} 4방향)`);
+        }
     } else if (score.kind === 'facets') {
         const singles = score.domains.filter(d => d.facets.length === 1);   // 강점처럼 영역 = 세부 하나
         const multis = score.domains.filter(d => d.facets.length > 1);
@@ -61,9 +68,9 @@ export function shareLines(session) {
             if (d.level === 'none') continue;
             const notable = [...d.notableHigh, ...d.notableLow].sort(byMagnitude).slice(0, 2);
             out.shape.push(`${d.gloss[d.level]} (${tag} ${d.en} ${DOMAIN_LEVEL_LABEL[d.level]}${d.level !== 'mid' && d.strength === 'clear' ? '·뚜렷' : ''}${notable.length ? ` · ${arrows(notable)}` : ''})`);
-            if (d.level === 'mid') midMulti.push(`${d.name}${Math.abs(d.ratio) >= 0.15 ? (d.ratio > 0 ? '↑' : '↓') : ''}`);
+            if (d.level === 'mid') midMulti.push(lean(d.name, d.ratio));
         }
-        if (midMulti.length) out.splits.push(`${midMulti.join('·')} 은 전체 중간${multis.some(d => d.level === 'mid' && (d.notableHigh.length || d.notableLow.length)) ? ', 세부만 갈림' : ''} (${tag})`);
+        if (midMulti.length) out.splits.push(`${midMulti.join('·')}${plain ? eunNeun(midMulti.at(-1)) : ' 은'} 전체 중간${multis.some(d => d.level === 'mid' && (d.notableHigh.length || d.notableLow.length)) ? ', 세부만 갈림' : ''} (${tag})`);
         const midSingles = [];
         for (const d of singles) {
             if (d.level === 'none') continue;
@@ -78,11 +85,11 @@ export function shareLines(session) {
 const doneSessions = sessionsByTest => Object.values(sessionsByTest).filter(s => s && s.status === 'done' && TEST_BY_ID[s.testId]);
 
 /** 모든 끝난 검사를 합친 조각. */
-export function collectLines(sessionsByTest) {
-    const all = { react: [], skip: [], shape: [], splits: [], splitsByAxis: { values: [], personality: [] } };
+export function collectLines(sessionsByTest, opts = {}) {
+    const all = { react: [], skip: [], direction: [], shape: [], splits: [], splitsByAxis: { values: [], personality: [] } };
     for (const s of doneSessions(sessionsByTest)) {
-        const p = shareLines(s);
-        for (const k of ['react', 'skip', 'shape', 'splits']) all[k].push(...p[k]);
+        const p = shareLines(s, opts);
+        for (const k of ['react', 'skip', 'direction', 'shape', 'splits']) all[k].push(...p[k]);
         const axis = TEST_BY_ID[s.testId].axis;
         if (all.splitsByAxis[axis]) all.splitsByAxis[axis].push(...p.splits);
     }
@@ -91,16 +98,35 @@ export function collectLines(sessionsByTest) {
 
 /** 카드·로어북에 붙여 넣는 공유용 요약. 끝난 검사만 넣는다. */
 export function shareText(sessionsByTest) {
-    const { react, skip, shape, splitsByAxis } = collectLines(sessionsByTest);
+    const { react, skip, direction, shape, splitsByAxis } = collectLines(sessionsByTest);
     const bullets = (list, empty) => list.length ? list.map(l => `- ${l}`) : [`- ${empty}`];
     const lines = ['[캐릭터 심리검사 요약]'];
-    lines.push('[가치관 — 반응하는 일]', ...bullets(react, '(가치관 검사 전)'));
+    lines.push('[가치관 — 반응하는 일]', ...bullets([...react, ...direction], '(가치관 검사 전)'));
     lines.push('[가치관 — 넘어가는 일]', ...bullets(skip, '(가치관 검사 전)'));
     if (splitsByAxis.values.length) lines.push('[가치관 — 갈리는 곳]', ...bullets(splitsByAxis.values));
     lines.push('[성격 — 반응 모양]', ...bullets(shape, '(성격 검사 전)'));
     if (splitsByAxis.personality.length) lines.push('[성격 — 갈리는 곳]', ...bullets(splitsByAxis.personality));
     lines.push('※ 오락용 검사 결과. 라벨은 참고 자료이며 행동을 고정하는 규칙이 아니다. 갈리는 곳은 상황에 따라 달라질 수 있다.');
     return lines.join('\n');
+}
+
+/**
+ * GID(판단 프리셋)용 요약 (0.6.1, 사용자 확정 형식). 같은 내용을 프리셋이 한 줄씩 조건 판정할 수 있는 모양으로:
+ *   줄마다 빈 줄(1A가 빈 줄 기준으로 문단을 나누므로 한 줄 = 판정 단위 하나), 줄 앞에 "[축 - 칸]" 접두(칸 제목이 따로 떨어져도 어느 칸 줄인지 알게),
+ *   ※ 문구 없음(카드 안에서 "구속력 없음"으로 읽혀서), 갈리는 곳·가치 방향에 기움 화살표 없음.
+ * 끝난 검사만. 아무것도 없으면 제목 줄만.
+ */
+export function gidText(sessionsByTest) {
+    const { react, skip, direction, shape, splitsByAxis } = collectLines(sessionsByTest, { plain: true });
+    const lines = ['[캐릭터 심리검사 요약]'];
+    const put = (prefix, list) => { for (const l of list) lines.push(`[${prefix}] ${l}`); };
+    put('가치관 - 반응하는 일', react);
+    put('가치관 - 넘어가는 일', skip);
+    put('가치관 - 가치 방향', direction);
+    put('가치관 - 갈리는 곳', splitsByAxis.values);
+    put('성격유형 - 반응 모양', shape);
+    put('성격유형 - 갈리는 곳', splitsByAxis.personality);
+    return lines.join('\n\n');
 }
 
 /**

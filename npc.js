@@ -9,6 +9,7 @@
 //   · 전형 표(ARCHETYPES)는 확장이 갖고 있다. 미리 정한 전형이면 모델이 unknown으로 둔 칸을 표대로 채운다. 약간 = 센 것 3칸, 뚜렷 = 표 전부.
 //   · 겹치지 않게는 모델에게 맡기지 않는다. 사용자가 붙여 넣은 기존 인물의 세 줄을 확장이 파싱해서, 남은 칸을 그들과 다른 쪽으로 채운다(최대 4칸).
 // 결과는 세 줄: [이름] 자리·말투 / 가치관: … / 성격: …  — 로어북 항목 하나에 60~90토큰.
+// 0.6.2: 같은 라벨을 GID용(문장, 줄마다 빈 줄, [축 - 칸] 접두)으로도 낸다 — 본 캐릭터 요약과 같은 모양이라 프리셋이 같은 규칙으로 읽는다. 200~300토큰.
 // 로어북에 자동으로 넣지 않는다. 복사만.
 import { MFQ2 } from './tests/mfq2.js';
 import { SCHWARTZ } from './tests/schwartz.js';
@@ -251,13 +252,59 @@ export function npcLines(npc) {
 }
 export const npcText = npc => npcLines(npc).join('\n');
 
-/** 붙여 넣은 세 줄(또는 비슷한 글)에서 이름과 라벨을 되읽는다. 라벨을 하나도 못 읽으면 null. */
+// ───────────────────────── GID용 (0.6.2, 사용자 확정: B안 = 문장으로) ─────────────────────────
+// 본 캐릭터의 gidText(summary.js)와 같은 모양이라 판단 프리셋(GID)이 둘을 같은 규칙으로 읽는다:
+//   줄마다 빈 줄(한 줄 = 판정 단위 하나), 줄 앞에 "[축 - 칸]" 접두, 가치관은 "〈장면〉: 반응 (이론 영어라벨 중시/낮음)", 성격은 "행동 모양 (이론 영어라벨 높음/낮음)".
+//   첫 줄 "[이름] 자리. 말투: …"는 접두가 없으므로 검사 줄(P)이 아니라 그 인물의 일반 설명 — 나이·관계·말투처럼 검사가 모르는 건 여기.
+//   중간(mid)은 적지 않는다 — NPC의 중간은 대부분 "모름"이고, 토큰을 아끼려고. 세 줄(npcText)과 같은 라벨을 문장으로 푼 것뿐이라 서로 바꿔 읽어도 같은 인물.
+const DETAIL = (() => {
+    const d = {};
+    for (const c of MFQ2.categories) d[`mfq2.${c.id}`] = { high: c.high, low: c.low };
+    for (const c of SCHWARTZ.categories) d[`schwartz.${c.id}`] = { high: c.high, low: c.low };
+    for (const x of BIGFIVE.domains) d[`bigfive.${x.id}`] = { gloss: x.gloss };
+    for (const x of HH.facets) d[`hexaco.${x.id}`] = { gloss: x.gloss };
+    for (const x of VIA.domains) d[`via.${x.id}`] = { gloss: x.gloss };
+    return Object.freeze(d);
+})();
+/** GID용 줄 배열. [0] = 첫 줄(이름·자리·말투), 나머지는 "[축 - 칸] …". 라벨이 전부 중간이면 첫 줄만. */
+export function npcGidLines(npc) {
+    const s = npcStructure(npc);
+    const out = [s.line1];
+    const react = [], skip = [], shape = [];
+    for (const k of KEYS) {
+        const lv = npc.labels?.[k.id]; if (lv !== 'high' && lv !== 'low') continue;
+        const det = DETAIL[k.id];
+        if (k.axis === 'values') {
+            const side = det[lv];
+            (lv === 'high' ? react : skip).push(`${side.cond ? side.cond + ': ' : ''}${side.react} (${k.tag} ${k.en} ${lv === 'high' ? '중시' : '낮음'})`);
+        } else {
+            shape.push(`${det.gloss[lv]} (${k.tag} ${k.en} ${lv === 'high' ? '높음' : '낮음'})`);
+        }
+    }
+    const put = (prefix, list) => { for (const l of list) out.push(`[${prefix}] ${l}`); };
+    put('가치관 - 반응하는 일', react);
+    put('가치관 - 넘어가는 일', skip);
+    const h = higherOrder(npc.labels || {});
+    if (h) put('가치관 - 가치 방향', [`센 순: ${h.top.name}(${h.top.en}) > ${h.bottom.name}(${h.bottom.en}) (Schwartz 4방향)`]);
+    put('성격유형 - 반응 모양', shape);
+    return out;
+}
+/** 로어북 항목에 붙여 넣는 GID용 글. 줄 사이 빈 줄. */
+export const npcGidText = npc => npcGidLines(npc).join('\n\n');
+
+/**
+ * 붙여 넣은 글에서 이름과 라벨을 되읽는다("겹치지 않게"의 기존 인물 칸). 라벨을 하나도 못 읽으면 null.
+ * 읽는 두 가지: 세 줄의 "이름↑/↓" 토큰, GID용의 "(이론 영어라벨 중시|높음|낮음)" 꼬리. 본 캐릭터의 GID용 요약을 붙여 넣어도 읽힌다.
+ */
+const TAG_EN_TO_ID = new Map(KEYS.map(k => [`${k.tag} ${k.en}`, k.id]));
 export function parseCode(text) {
     const t = String(text || '');
     const names = [...NAME_TO_ID.keys()].sort((a, b) => b.length - a.length).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     const re = new RegExp(`(${names.join('|')})(↑|↓)`, 'g');
     const labels = {}; let m, n = 0;
     while ((m = re.exec(t))) { labels[NAME_TO_ID.get(m[1])] = m[2] === '↑' ? 'high' : 'low'; n++; }
+    const tail = /\((MFQ-2|Schwartz|Big Five|HEXACO|VIA) ([A-Za-z][A-Za-z\- ]*?) (중시|높음|낮음)[^)]*\)/g;
+    while ((m = tail.exec(t))) { const id = TAG_EN_TO_ID.get(`${m[1]} ${m[2]}`); if (!id) continue; labels[id] = m[3] === '낮음' ? 'low' : 'high'; n++; }
     if (!n) return null;
     for (const k of KEYS) labels[k.id] ||= 'mid';
     const nm = /^\s*\[([^\]\n]{1,60})\]/.exec(t);

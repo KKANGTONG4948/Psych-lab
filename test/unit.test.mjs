@@ -248,7 +248,7 @@ test('Schwartz PVQ40: 40문항·채점표 대응·1~6 척도·남/여성판·평
     const sess = { testId: 'schwartz', status: 'done', settings: { portraitGender: 'm' }, answers: SCHWARTZ.items.map(i => ({ itemId: i.id, score: sc(i.category), reason: 'r' })) };
     const l = shareLines(sess);
     assert.equal(l.react[0], '가까운 사람(친구·가족·동료)이 도움이 필요하거나 믿음을 거는 장면: 충실하게 돕고 곁을 지킨다 (Schwartz Benevolence 중시·뚜렷)');
-    assert.ok(l.react[1].startsWith('가치 방향(센 순): 자기 초월(Self-Transcendence)↑ >') && l.react[1].endsWith('(Schwartz 4방향)'), l.react[1]);
+    assert.ok(l.direction[0].startsWith('가치 방향(센 순): 자기 초월(Self-Transcendence)↑ >') && l.direction[0].endsWith('(Schwartz 4방향)'), l.direction[0]);
     assert.equal(l.skip[0], '돈·지위·결정권이 걸린 장면: 집착하지 않는다 (Schwartz Power 낮음)');
     const ov = overview({ schwartz: sess }, '신파치');
     assert.ok(ov[0][0].startsWith('삶에서 중요하게 여기는 것은 박애(') && ov[0][1].startsWith('뒷전인 것은 권력(') && ov[0].at(-1).startsWith('큰 방향으로는 자기 초월 >'), ov[0].join(' | '));
@@ -367,4 +367,75 @@ test('카드 안의 인물(0.6.0): 대상 키, 항목 목록, 항목 하나 + �
     const sys2 = buildMessages(sess2, MFQ2.items.slice(0, 1))[0].content;
     assert.ok(!sess2.card.world && !sys2.includes('"world"') && !sys2.includes('자료의 world는'));
     globalThis.SillyTavern.getContext = prevCtx;
+});
+
+test('GID용 요약(0.6.1): 줄마다 빈 줄, [축 - 칸] 접두, ※·환산 없음, 갈리는 곳·가치 방향에 기움 화살표 없음', async () => {
+    const { gidText, shareText } = await import('../summary.js');
+    const { TESTS } = await import('../tests/registry.js');
+    const hash = id => { let x = 0; for (const ch of id) x = (x * 31 + ch.charCodeAt(0)) % 997; return x; };
+    const mk = t => ({ testId: t.id, status: 'done', answers: t.items.map(i => ({ itemId: i.id, score: (hash(i.id) % (t.scale.max - t.scale.min + 1)) + t.scale.min, reason: 'r' })) });
+    const sessions = Object.fromEntries(TESTS.map(t => [t.id, mk(t)]));
+    const g = gidText(sessions);
+    const lines = g.split('\n\n');
+    assert.equal(lines[0], '[캐릭터 심리검사 요약]');
+    assert.ok(!g.includes('\n- ') && !g.includes('※') && !/MBTI|에니어|IPC|환산/.test(g), '불릿·※·환산 없음');
+    assert.ok(lines.slice(1).every(l => /^\[(가치관 - (반응하는 일|넘어가는 일|가치 방향|갈리는 곳)|성격유형 - (반응 모양|갈리는 곳))\] \S/.test(l)), '모든 줄에 접두: ' + lines.slice(1).find(l => !/^\[/.test(l)));
+    assert.ok(!lines.some(l => l.includes('\n')), '줄 안에 줄바꿈 없음(한 줄 = 판정 단위 하나)');
+    const order = lines.slice(1).map(l => /^\[([^\]]+)\]/.exec(l)[1]); const idx = k => order.findIndex(x => x === k);
+    const keys = ['가치관 - 반응하는 일', '가치관 - 넘어가는 일', '가치관 - 가치 방향', '가치관 - 갈리는 곳', '성격유형 - 반응 모양', '성격유형 - 갈리는 곳'].filter(k => idx(k) >= 0);
+    assert.deepEqual(keys.map(idx), [...keys.map(idx)].sort((a, b) => a - b), '칸 순서 고정');
+    for (const l of lines.filter(l => /갈리는 곳\]|가치 방향\]/.test(l))) assert.ok(!/[↑↓]/.test(l), '기움 화살표 없음: ' + l);
+    const split = lines.find(l => l.startsWith('[가치관 - 갈리는 곳]'));
+    if (split) assert.match(split, /^\[가치관 - 갈리는 곳\] [^ ]+(은|는) 중간 — 상황 따라 반응하거나 넘김 \((MFQ-2|Schwartz)\)$/);
+    const dir = lines.find(l => l.startsWith('[가치관 - 가치 방향]'));
+    if (dir) assert.match(dir, /^\[가치관 - 가치 방향\] 센 순: .* > .* \(Schwartz 4방향\)$/);
+    // 공유용 요약은 전과 같은 모양(불릿·화살표·※ 유지, 가치 방향 줄은 반응하는 일 끝에)
+    const sh = shareText(sessions);
+    assert.ok(sh.includes('\n- 가치 방향(센 순): ') && sh.includes('※ 오락용') && sh.indexOf('가치 방향(센 순)') < sh.indexOf('[가치관 — 넘어가는 일]'));
+    assert.equal(gidText({}), '[캐릭터 심리검사 요약]');
+});
+
+test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반응 문장으로, 본 캐릭터 GID용과 같은 틀, 되읽기', async () => {
+    const npc = await import('../npc.js');
+    const { gidText } = await import('../summary.js');
+    const mid = Object.fromEntries(npc.KEYS.map(k => [k.id, 'mid']));
+    const labels = { ...mid, 'mfq2.purity': 'low', 'schwartz.self_direction': 'high', 'schwartz.hedonism': 'high', 'schwartz.conformity': 'low', 'schwartz.tradition': 'low', 'bigfive.E': 'low', 'bigfive.A': 'low', 'hexaco.H1': 'high', 'via.hum': 'low' };
+    const rec = { name: '진지명', role: '36세의 무뚝뚝하고 거친 남성, 진소화의 아버지', speech: '낮고 쉰 목소리로 툭 내뱉는 짧은 반말', labels };
+    const g = npc.npcGidText(rec);
+    const lines = g.split('\n\n');
+    assert.equal(lines[0], '[진지명] 36세의 무뚝뚝하고 거친 남성, 진소화의 아버지. 말투: 낮고 쉰 목소리로 툭 내뱉는 짧은 반말.', '첫 줄 = 세 줄의 첫 줄과 같음(접두 없음 → 검사 줄 아님)');
+    assert.ok(lines.slice(1).every(l => /^\[(가치관 - (반응하는 일|넘어가는 일|가치 방향)|성격유형 - 반응 모양)\] \S/.test(l)), '나머지 줄 전부 접두: ' + lines.slice(1).find(l => !/^\[/.test(l)));
+    assert.ok(!lines.some(l => l.includes('\n')) && !g.includes('※') && !/[↑↓]/.test(g), '줄 안 줄바꿈·※·화살표 없음');
+    // 가치관: 높음 → 반응하는 일 "장면: 반응 (이론 EN 중시)", 낮음 → 넘어가는 일 "(… 낮음)"; 검사 정의의 문장 그대로
+    assert.ok(lines.includes('[가치관 - 반응하는 일] 스스로 정하고 자기 방식대로 할 자유가 막히는 장면: 답답해하고 자기 방식을 지키려 한다 (Schwartz Self-Direction 중시)'), g);
+    assert.ok(lines.includes('[가치관 - 넘어가는 일] 상스러운 말·방종·품위 없는 행동을 보는 장면: 거리낌 없이 넘긴다 (MFQ-2 Purity 낮음)'), g);
+    assert.ok(lines.includes('[가치관 - 가치 방향] 센 순: 변화 개방(Openness to Change) > 보존(Conservation) (Schwartz 4방향)'), g);
+    // 성격: 영역 글(gloss) + "(이론 EN 높음/낮음)"
+    assert.ok(lines.includes('[성격유형 - 반응 모양] 조용하고 혼자 있는 쪽을 택한다 (Big Five Extraversion 낮음)'), g);
+    assert.ok(lines.includes('[성격유형 - 반응 모양] 아첨하거나 연기하지 않고 있는 그대로 군다 (HEXACO Sincerity 높음)'), g);
+    assert.ok(lines.includes('[성격유형 - 반응 모양] 농담을 잘 안 하고, 남을 웃기려 애쓰지 않는다 (VIA Humor 낮음)'), g);
+    // 중간은 안 적음: 라벨 9개 + 가치 방향 1 + 첫 줄 1
+    assert.equal(lines.length, 11, g);
+    // 칸 순서 고정: 반응 → 넘어감 → 방향 → 성격
+    const order = lines.slice(1).map(l => /^\[([^\]]+)\]/.exec(l)[1]); const idx = k => order.indexOf(k);
+    assert.ok(idx('가치관 - 반응하는 일') < idx('가치관 - 넘어가는 일') && idx('가치관 - 넘어가는 일') < idx('가치관 - 가치 방향') && idx('가치관 - 가치 방향') < idx('성격유형 - 반응 모양'));
+    // 본 캐릭터 GID용과 같은 접두·꼬리 모양(프리셋이 같은 규칙으로 읽는다)
+    const { TESTS } = await import('../tests/registry.js');
+    const hash = id => { let x = 0; for (const ch of id) x = (x * 31 + ch.charCodeAt(0)) % 997; return x; };
+    const mkAll = pick => Object.fromEntries(TESTS.map(t => [t.id, { testId: t.id, status: 'done', answers: t.items.map(i => ({ itemId: i.id, score: pick(t, i), reason: 'r' })) }]));
+    const mains = [mkAll((t, i) => (hash(i.id) % (t.scale.max - t.scale.min + 1)) + t.scale.min), mkAll(t => t.scale.max), mkAll(t => t.scale.min)].map(gidText);
+    const main = mains[0];
+    const shapeOf = l => l.replace(/^\[([^\]]+)\] .* \(([A-Za-z0-9\- ]+?) [A-Za-z\- ]+ (중시|낮음|높음)[^)]*\)$/, '[$1] … ($2 EN $3)');
+    const npcShapes = new Set(lines.slice(1).filter(l => !/가치 방향/.test(l)).map(shapeOf)), mainShapes = new Set(mains.flatMap(m => m.split('\n\n').slice(1)).filter(l => /중시|낮음|높음/.test(l)).map(shapeOf));
+    for (const s of npcShapes) assert.ok(mainShapes.has(s), '본 캐릭터 요약에도 있는 틀: ' + s + ' / ' + [...mainShapes].join(' | '));
+    // 전부 중간이면 첫 줄만
+    assert.equal(npc.npcGidText({ name: 'x', role: 'r', speech: '', labels: mid }), '[x] r.');
+    // 되읽기: GID용 글도 "겹치지 않게" 칸에 붙여 넣으면 같은 라벨로 읽힌다 (세 줄과 동일)
+    const back = npc.parseCode(g);
+    assert.equal(back.name, '진지명'); assert.equal(back.count, 9);
+    assert.deepEqual(back.labels, npc.parseCode(npc.npcText(rec)).labels, 'GID용과 세 줄은 같은 라벨로 되읽힘');
+    // 본 캐릭터의 GID용 요약을 붙여 넣어도 읽힌다(뚜렷·세부 꼬리 포함)
+    const mb = npc.parseCode(main);
+    assert.ok(mb && mb.count > 0 && Object.values(mb.labels).some(v => v !== 'mid'), '본 캐릭터 GID용 되읽기');
+    assert.equal(npc.parseCode('(Schwartz 4방향) 아무것도'), null, '방향 줄만으로는 라벨 없음');
 });

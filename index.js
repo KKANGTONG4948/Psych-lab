@@ -5,10 +5,10 @@ import { settings, save, getSession, deleteSession, createSession, applyCurrentS
 import { listEntries } from './card.js';
 import { TESTS, TEST_BY_ID, PLANNED, AXES, AXIS_BY_ID } from './tests/registry.js';
 import { STRENGTH_LABEL, LEVEL_LABEL, DOMAIN_LEVEL_LABEL } from './scoring.js';
-import { resultOf, shareText, sourceCredit, overview, byAxis, collectLines } from './summary.js';
-import { ARCHETYPES, STRENGTH, KEY_BY_ID, hasChat, listNpcs, getNpcRecord, deleteNpcRecord, loadDraft, saveDraft, chatLog, buildNpcMessages, estimateTokens, generateNpc, editNpcRecord, npcStructure, npcText, parseCode } from './npc.js';
+import { resultOf, shareText, gidText, sourceCredit, overview, byAxis, collectLines } from './summary.js';
+import { ARCHETYPES, STRENGTH, KEY_BY_ID, hasChat, listNpcs, getNpcRecord, deleteNpcRecord, loadDraft, saveDraft, chatLog, buildNpcMessages, estimateTokens, generateNpc, editNpcRecord, npcStructure, npcText, npcGidText, parseCode } from './npc.js';
 
-const VERSION = '0.6.0';
+const VERSION = '0.6.2';
 const ROOT_ID = 'psych_lab_root';
 const ctx = () => SillyTavern.getContext();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -123,7 +123,7 @@ function npcCard() {
     const n = ok ? listNpcs().length : 0;
     return el('section', { class: 'pl-card' },
         el('h2', { class: 'pl-h2' }, 'NPC 뽑기', el('span', { class: 'pl-h2-sub' }, '간소화 — 내 설정 + 이 채팅의 로그 → 유형 라벨 세 줄 · 모델 호출 1번')),
-        el('p', { class: 'pl-help' }, '다인봇 NPC가 다 비슷해질 때 써요. 이름과 이미 만든 설정을 적고 뽑으면 다섯 검사의 라벨로 세 줄을 만들어요. 복사해서 로어북 항목에 붙이면 고정 NPC가 돼요. 그룹 채팅에서도 돼요. 뽑은 NPC는 이 채팅방에만 저장돼요 — 다른 채팅에서는 안 보여요.'),
+        el('p', { class: 'pl-help' }, '다인봇 NPC가 다 비슷해질 때 써요. 이름과 이미 만든 설정을 적고 뽑으면 다섯 검사의 라벨로 세 줄을 만들어요. 복사해서 로어북 항목에 붙이면 고정 NPC가 돼요 — 판단 프리셋(GID)을 쓰면 같은 라벨을 문장으로 푼 "GID용 복사"를 쓰세요. 그룹 채팅에서도 돼요. 뽑은 NPC는 이 채팅방에만 저장돼요 — 다른 채팅에서는 안 보여요.'),
         ok ? el('div', { class: 'pl-actions' },
             el('button', { class: 'pl-btn', type: 'button', id: 'pl_npc_open', onclick: () => go('npc') }, 'NPC 뽑기'),
             n ? el('span', { class: 'pl-chip pl-chip-done' }, `이 채팅의 NPC ${n}개`) : null)
@@ -163,8 +163,10 @@ function renderHome(t) {
             el('p', { class: 'pl-help' }, doneCount(ui.avatar) ? `끝난 검사 ${doneCount(ui.avatar)}개를 한 화면에서 읽어요. 가치관과 성격을 나눠서 보여 주고, 카드에 붙여 넣는 공유용 요약도 여기서 복사해요.` : '검사를 하나라도 끝내면 여기서 한 화면으로 읽을 수 있어요.'),
             el('div', { class: 'pl-actions' },
                 el('button', { class: 'pl-btn', type: 'button', disabled: doneCount(ui.avatar) ? null : '', onclick: () => go('report') }, '종합 결과 보기'),
-                el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', disabled: doneCount(ui.avatar) ? null : '', onclick: () => copyShare() }, '공유용 요약 복사')),
+                el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', disabled: doneCount(ui.avatar) ? null : '', onclick: () => copyShare() }, '공유용 요약 복사'),
+                el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', id: 'pl_copy_gid', disabled: doneCount(ui.avatar) ? null : '', onclick: () => copyGid() }, 'GID용 복사')),
             el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, '공유용 요약 미리 보기'), el('pre', { class: 'pl-share', id: 'pl_share_preview' }, shareText(sessionsFor(ui.avatar)))),
+            el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, 'GID용 미리 보기 — 줄마다 빈 줄, [축 - 칸] 접두, ※ 없음. 판단 프리셋(GID)이 한 줄씩 조건 판정하게'), el('pre', { class: 'pl-share', id: 'pl_gid_preview' }, gidText(sessionsFor(ui.avatar)))),
         ),
         npcCard(),
         el('details', { class: 'pl-card pl-settings' },
@@ -351,6 +353,7 @@ function renderResult() {
             el('div', { class: 'pl-actions' },
                 el('button', { class: 'pl-btn', type: 'button', onclick: () => go('report') }, '종합 결과'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => copyShare() }, '공유용 요약 복사'),
+                el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => copyGid() }, 'GID용 복사'),
                 partial ? el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => startTest(ui.testId, true) }, '이어가기') : null),
         ),
         el('section', { class: 'pl-card' },
@@ -411,6 +414,11 @@ function renderReport(t) {
             el('pre', { class: 'pl-share' }, shareText(sessions)),
             el('div', { class: 'pl-actions' }, el('button', { class: 'pl-btn', type: 'button', onclick: () => copyShare() }, '복사')),
         ),
+        el('section', { class: 'pl-card pl-card-soft' },
+            el('h2', { class: 'pl-h2' }, 'GID용 요약', el('span', { class: 'pl-h2-sub' }, '판단 프리셋(GID)용. 같은 내용을 줄마다 빈 줄로 떼고 [축 - 칸] 접두를 붙였어요 — 프리셋이 한 줄씩 조건 판정해요. ※ 문구는 뺐어요.')),
+            el('pre', { class: 'pl-share', id: 'pl_gid_text' }, gidText(sessions)),
+            el('div', { class: 'pl-actions' }, el('button', { class: 'pl-btn', type: 'button', onclick: () => copyGid() }, 'GID용 복사')),
+        ),
         el('section', { class: 'pl-card pl-card-soft' }, el('h2', { class: 'pl-h2' }, '출처'), ...groups.flatMap(g => g.tests).map(({ test }) => el('pre', { class: 'pl-share' }, sourceCredit(test)))),
     );
 }
@@ -451,9 +459,9 @@ function renderNpc(t) {
         if (!d.existing.length) d.existing = [''];
         const rows = d.existing.map((txt, i) => {
             const parsed = parseCode(txt);
-            const status = el('span', { class: 'pl-help pl-existing-status' }, !txt.trim() ? '전에 뽑은 세 줄을 붙여 넣으세요.' : parsed ? `읽음: ${parsed.name} · 라벨 ${parsed.count}개` : '라벨(↑↓)을 못 읽었어요 — 이 도구가 만든 세 줄 틀이어야 해요.');
+            const status = el('span', { class: 'pl-help pl-existing-status' }, !txt.trim() ? '전에 뽑은 세 줄이나 GID용 글을 붙여 넣으세요.' : parsed ? `읽음: ${parsed.name} · 라벨 ${parsed.count}개` : '라벨을 못 읽었어요 — 이 도구가 만든 세 줄(↑↓)이나 GID용 글이어야 해요.');
             return el('div', { class: 'pl-existing' },
-                el('textarea', { class: 'pl-textarea pl-textarea-sm', rows: 3, placeholder: '[이름] …\n가치관: … (MFQ-2) · … (Schwartz)\n성격: … (Big Five) · … (HEXACO) · … (VIA)', oninput: e => { d.existing[i] = e.target.value; keep(); const p = parseCode(e.target.value); status.textContent = !e.target.value.trim() ? '전에 뽑은 세 줄을 붙여 넣으세요.' : p ? `읽음: ${p.name} · 라벨 ${p.count}개` : '라벨(↑↓)을 못 읽었어요 — 이 도구가 만든 세 줄 틀이어야 해요.'; } }, txt),
+                el('textarea', { class: 'pl-textarea pl-textarea-sm', rows: 3, placeholder: '[이름] …\n가치관: … (MFQ-2) · … (Schwartz)\n성격: … (Big Five) · … (HEXACO) · … (VIA)', oninput: e => { d.existing[i] = e.target.value; keep(); const p = parseCode(e.target.value); status.textContent = !e.target.value.trim() ? '전에 뽑은 세 줄이나 GID용 글을 붙여 넣으세요.' : p ? `읽음: ${p.name} · 라벨 ${p.count}개` : '라벨을 못 읽었어요 — 이 도구가 만든 세 줄(↑↓)이나 GID용 글이어야 해요.'; } }, txt),
                 el('div', { class: 'pl-existing-foot' }, status, el('button', { class: 'pl-link', type: 'button', onclick: () => { d.existing.splice(i, 1); keep(); render(); } }, '× 지우기')));
         });
         const saved = listNpcs();
@@ -516,7 +524,8 @@ function npcListCard() {
                 el('div', { class: 'pl-npc-main' }, el('div', { class: 'pl-npc-name' }, r.name, el('span', { class: 'pl-help' }, ` ${fmtDate(r.createdAt)}`)), el('div', { class: 'pl-npc-code' }, brief)),
                 el('div', { class: 'pl-actions' },
                     el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => go('npcResult', { npcId: r.id }) }, '보기'),
-                    el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => copyText(npcText(r), `${r.name} 세 줄`) }, '복사')));
+                    el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => copyText(npcText(r), `${r.name} 세 줄`) }, '세 줄 복사'),
+                    el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => copyText(npcGidText(r), `${r.name} GID용`) }, 'GID용 복사')));
         }) : el('p', { class: 'pl-help' }, '아직 없어요.'));
 }
 
@@ -573,12 +582,16 @@ function renderNpcResult(t) {
                 el('span', {}, '나머지는 중간(생략)')),
             overlapText ? el('span', { class: 'pl-help' }, overlapText) : null,
             el('div', { class: 'pl-actions' },
-                el('button', { class: 'pl-btn', type: 'button', id: 'pl_npc_copy', onclick: () => copyText(npcText(r), `${r.name} 세 줄`) }, '복사'),
+                el('button', { class: 'pl-btn', type: 'button', id: 'pl_npc_copy', onclick: () => copyText(npcText(r), `${r.name} 세 줄`) }, '세 줄 복사'),
+                el('button', { class: 'pl-btn', type: 'button', id: 'pl_npc_copy_gid', onclick: () => copyText(npcGidText(r), `${r.name} GID용`) }, 'GID용 복사'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', id: 'pl_npc_again', disabled: ui.busy ? '' : null, onclick: again }, ui.busy ? '뽑는 중…' : '다르게 다시'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: editFirst }, '첫 줄 고치기'),
                 el('button', { class: 'pl-btn pl-btn-danger', type: 'button', onclick: remove }, '지우기'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => go('npc') }, '새로 뽑기')),
-            el('span', { class: 'pl-help' }, `세 줄 합쳐 약 ${Math.ceil(npcText(r).length / 2).toLocaleString()}토큰(어림). 로어북 항목의 키워드는 이름(${r.name})으로 두면 돼요. 복사하면 밑줄 없이 글만 가요.`),
+            el('span', { class: 'pl-help' }, `세 줄은 약 ${Math.ceil(npcText(r).length / 2).toLocaleString()}토큰, GID용은 약 ${Math.ceil(npcGidText(r).length / 2).toLocaleString()}토큰(어림). 로어북 항목의 키워드는 이름(${r.name})으로 두면 돼요 — 상시(🔵) 말고. 복사하면 밑줄 없이 글만 가요.`),
+            el('details', { class: 'pl-share-details' },
+                el('summary', { class: 'pl-help' }, 'GID용 미리 보기 — 같은 라벨을 문장으로. 줄마다 빈 줄, [축 - 칸] 접두. 판단 프리셋(GID)이 본 캐릭터 요약과 같은 규칙으로 읽어요. 첫 줄은 접두가 없어서 검사 줄이 아니라 이 인물의 일반 설명이에요.'),
+                el('pre', { class: 'pl-share', id: 'pl_npc_gid_preview' }, npcGidText(r))),
         ),
         npcListCard(),
     );
@@ -684,6 +697,7 @@ async function copyText(text, label) {
     }
 }
 const copyShare = () => copyText(shareText(sessionsFor(ui.avatar)), '공유용 요약');
+const copyGid = () => copyText(gidText(sessionsFor(ui.avatar)), 'GID용 요약');
 
 // ───────────────────────── 메뉴 등록 (햄버거 ☰) ─────────────────────────
 function makeMenuItem() {
