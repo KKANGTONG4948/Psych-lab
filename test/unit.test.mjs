@@ -393,6 +393,12 @@ test('GID용 요약(0.6.1): 줄마다 빈 줄, [축 - 칸] 접두, ※·환산 �
     const sh = shareText(sessions);
     assert.ok(sh.includes('\n- 가치 방향(센 순): ') && sh.includes('※ 오락용') && sh.indexOf('가치 방향(센 순)') < sh.indexOf('[가치관 — 넘어가는 일]'));
     assert.equal(gidText({}), '[캐릭터 심리검사 요약]');
+    // 0.6.3: 제목 줄에 이름 — 준 이름 → 기록의 이름(카드 안의 인물이면 그 라벨) → '캐릭터'
+    assert.ok(gidText(sessions, '타카모리 스즈네').startsWith('[타카모리 스즈네 심리검사 요약]\n\n[가치관 - '));
+    assert.ok(shareText(sessions, '타카모리 스즈네').startsWith('[타카모리 스즈네 심리검사 요약]\n[가치관 — 반응하는 일]'));
+    const named = Object.fromEntries(Object.entries(sessions).map(([k, s]) => [k, { ...s, name: '누나' }]));
+    assert.ok(gidText(named).startsWith('[누나 심리검사 요약]') && shareText(named).startsWith('[누나 심리검사 요약]'), '이름 안 줘도 기록의 이름');
+    assert.ok(gidText(named, '  ').startsWith('[누나 심리검사 요약]') && gidText({ x: { ...sessions.mfq2, name: '누나', status: 'running' } }).startsWith('[캐릭터 심리검사 요약]'), '빈 이름은 무시, 끝난 검사만');
 });
 
 test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반응 문장으로, 본 캐릭터 GID용과 같은 틀, 되읽기', async () => {

@@ -8,7 +8,7 @@ import { STRENGTH_LABEL, LEVEL_LABEL, DOMAIN_LEVEL_LABEL } from './scoring.js';
 import { resultOf, shareText, gidText, sourceCredit, overview, byAxis, collectLines } from './summary.js';
 import { ARCHETYPES, STRENGTH, KEY_BY_ID, hasChat, listNpcs, getNpcRecord, deleteNpcRecord, loadDraft, saveDraft, chatLog, buildNpcMessages, estimateTokens, generateNpc, editNpcRecord, npcStructure, npcText, npcGidText, parseCode } from './npc.js';
 
-const VERSION = '0.6.2';
+const VERSION = '0.6.3';
 const ROOT_ID = 'psych_lab_root';
 const ctx = () => SillyTavern.getContext();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -90,6 +90,7 @@ function render() {
         t.key = subjectKey(t.avatar, ek); t.entry = ek ? (entry || { key: ek, label: Object.values(sessionsFor(t.key)).find(Boolean)?.name || '(인물 읽는 중)' }) : null;
         t.subjectName = t.entry ? t.entry.label : t.name;
     }
+    ui.subjectName = t.mode === 'single' ? t.subjectName : null;   // 0.6.3: 요약 제목 줄 "[이름 심리검사 요약]"에 쓴다
     // 결과·진행 화면을 보던 중 채팅이 바뀌면 홈으로. 진행 중인 검사는 엔진이 알아서 계속한다. NPC 화면은 채팅이 바뀌어도 그대로(로그만 새로 읽는다).
     if (t.mode === 'single') { if (ui.avatar !== t.key && ui.view !== 'home' && !NPC_VIEWS.has(ui.view)) ui.view = 'home'; ui.avatar = t.key; }
     else { ui.avatar = null; if (!NPC_VIEWS.has(ui.view)) ui.view = 'home'; }
@@ -165,8 +166,8 @@ function renderHome(t) {
                 el('button', { class: 'pl-btn', type: 'button', disabled: doneCount(ui.avatar) ? null : '', onclick: () => go('report') }, '종합 결과 보기'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', disabled: doneCount(ui.avatar) ? null : '', onclick: () => copyShare() }, '공유용 요약 복사'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', id: 'pl_copy_gid', disabled: doneCount(ui.avatar) ? null : '', onclick: () => copyGid() }, 'GID용 복사')),
-            el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, '공유용 요약 미리 보기'), el('pre', { class: 'pl-share', id: 'pl_share_preview' }, shareText(sessionsFor(ui.avatar)))),
-            el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, 'GID용 미리 보기 — 줄마다 빈 줄, [축 - 칸] 접두, ※ 없음. 판단 프리셋(GID)이 한 줄씩 조건 판정하게'), el('pre', { class: 'pl-share', id: 'pl_gid_preview' }, gidText(sessionsFor(ui.avatar)))),
+            el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, '공유용 요약 미리 보기'), el('pre', { class: 'pl-share', id: 'pl_share_preview' }, shareText(sessionsFor(ui.avatar), ui.subjectName))),
+            el('details', { class: 'pl-share-details' }, el('summary', { class: 'pl-help' }, 'GID용 미리 보기 — 줄마다 빈 줄, [축 - 칸] 접두, ※ 없음. 판단 프리셋(GID)이 한 줄씩 조건 판정하게'), el('pre', { class: 'pl-share', id: 'pl_gid_preview' }, gidText(sessionsFor(ui.avatar), ui.subjectName))),
         ),
         npcCard(),
         el('details', { class: 'pl-card pl-settings' },
@@ -411,12 +412,12 @@ function renderReport(t) {
         ),
         el('section', { class: 'pl-card pl-card-soft' },
             el('h2', { class: 'pl-h2' }, '공유용 요약', el('span', { class: 'pl-h2-sub' }, '카드나 로어북에 붙여 넣는 글. 자동으로 넣지는 않아요.')),
-            el('pre', { class: 'pl-share' }, shareText(sessions)),
+            el('pre', { class: 'pl-share' }, shareText(sessions, ui.subjectName)),
             el('div', { class: 'pl-actions' }, el('button', { class: 'pl-btn', type: 'button', onclick: () => copyShare() }, '복사')),
         ),
         el('section', { class: 'pl-card pl-card-soft' },
             el('h2', { class: 'pl-h2' }, 'GID용 요약', el('span', { class: 'pl-h2-sub' }, '판단 프리셋(GID)용. 같은 내용을 줄마다 빈 줄로 떼고 [축 - 칸] 접두를 붙였어요 — 프리셋이 한 줄씩 조건 판정해요. ※ 문구는 뺐어요.')),
-            el('pre', { class: 'pl-share', id: 'pl_gid_text' }, gidText(sessions)),
+            el('pre', { class: 'pl-share', id: 'pl_gid_text' }, gidText(sessions, ui.subjectName)),
             el('div', { class: 'pl-actions' }, el('button', { class: 'pl-btn', type: 'button', onclick: () => copyGid() }, 'GID용 복사')),
         ),
         el('section', { class: 'pl-card pl-card-soft' }, el('h2', { class: 'pl-h2' }, '출처'), ...groups.flatMap(g => g.tests).map(({ test }) => el('pre', { class: 'pl-share' }, sourceCredit(test)))),
@@ -696,8 +697,8 @@ async function copyText(text, label) {
         ta.remove();
     }
 }
-const copyShare = () => copyText(shareText(sessionsFor(ui.avatar)), '공유용 요약');
-const copyGid = () => copyText(gidText(sessionsFor(ui.avatar)), 'GID용 요약');
+const copyShare = () => copyText(shareText(sessionsFor(ui.avatar), ui.subjectName), '공유용 요약');
+const copyGid = () => copyText(gidText(sessionsFor(ui.avatar), ui.subjectName), 'GID용 요약');
 
 // ───────────────────────── 메뉴 등록 (햄버거 ☰) ─────────────────────────
 function makeMenuItem() {

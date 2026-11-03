@@ -163,7 +163,7 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     await page.evaluate(() => { navigator.clipboard.writeText = t => { window.__copied = t; return Promise.resolve(); }; });
     await page.click('#pl_copy_gid'); await page.waitForTimeout(40);
     const gid = await page.evaluate(() => window.__copied);
-    ok(gid.startsWith('[캐릭터 심리검사 요약]\n\n[가치관 - 반응하는 일] ') && gid.includes('\n\n[성격유형 - 반응 모양] ') && !gid.includes('※') && !gid.includes('\n- ') && gid.split('\n\n').slice(1).every(l => /^\[(가치관|성격유형) - /.test(l)) && gid === (await page.$eval('#pl_gid_preview', e => e.textContent)), 'GID용 복사: 접두·빈 줄·※ 없음, 미리 보기와 동일');
+    ok(gid.startsWith('[히지카타 토시로 심리검사 요약]\n\n[가치관 - 반응하는 일] ') && gid.includes('\n\n[성격유형 - 반응 모양] ') && !gid.includes('※') && !gid.includes('\n- ') && gid.split('\n\n').slice(1).every(l => /^\[(가치관|성격유형) - /.test(l)) && gid === (await page.$eval('#pl_gid_preview', e => e.textContent)), 'GID용 복사: 접두·빈 줄·※ 없음, 미리 보기와 동일');
     ok(!/\[강도\]/.test(share) && !/층/.test(share) && !/Moral Foundations|IPIP-NEO|Character Strengths|세부:/.test(share) && !/(↑|↓)[^()\n]*(↑|↓)[^()\n]*(↑|↓)/.test(share), '공유용 요약: 강도·층·긴 이론명 없음, 세부는 화살표 최대 2개');
 
     // 6. retries: bad output → 6 calls (1 + 5 retries), lastRaw saved only at the end
@@ -290,7 +290,10 @@ const session = (page, avatar, testId) => page.evaluate(([a, t]) => window.Silly
     const es = await page.evaluate(() => window.SillyTavern.getContext().extensionSettings.psych_lab.sessions);
     ok(es['shinpachi.png#entry:embedded:0']?.mfq2?.status === 'done' && es['shinpachi.png#entry:embedded:0'].mfq2.subject.label === '누나' && es['shinpachi.png']?.mfq2?.status === 'done', '기록은 "카드#entry:항목" 키로 따로, 카드 자체 기록은 그대로');
     await page.click('.pl-back'); await page.waitForSelector('#pl_entry');
+    // 0.6.3: 요약 제목 줄에 대상 이름 — 카드 안의 인물이면 그 인물 이름
+    ok((await page.$eval('#pl_share_preview', e => e.textContent)).startsWith('[누나 심리검사 요약]\n') && (await page.$eval('#pl_gid_preview', e => e.textContent)).startsWith('[누나 심리검사 요약]\n\n'), '카드 안의 인물: 요약 제목 줄이 "[누나 심리검사 요약]"');
     await page.selectOption('#pl_entry', ''); await page.waitForTimeout(40);
+    ok((await page.$eval('#pl_share_preview', e => e.textContent)).startsWith('[시무라 신파치 심리검사 요약]\n'), '카드 자체로 돌아오면 제목 줄도 카드 이름');
     ok((await page.$eval('#pl_sub', e => e.textContent)) === '시무라 신파치' && (await page.$$eval('.pl-chip', els => els.map(e => e.textContent))).filter(x => /완료/.test(x)).length >= 2, '카드 자체로 돌아오면 카드의 기록(완료 2개 이상)이 다시 보임');
     // 히지카타: 연결 로어북(gintama) 항목 2개(꺼진 항목 제외)가 'book:uid@이름' 키로
     await page.evaluate(() => window.__st.setChat(0, undefined)); await page.waitForTimeout(60);

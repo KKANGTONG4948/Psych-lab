@@ -83,6 +83,12 @@ export function shareLines(session, { plain = false } = {}) {
 }
 
 const doneSessions = sessionsByTest => Object.values(sessionsByTest).filter(s => s && s.status === 'done' && TEST_BY_ID[s.testId]);
+/** 요약 제목 줄 (0.6.3, 사용자 요청): "[타카모리 스즈네 심리검사 요약]" — 이름은 준 것 → 끝난 검사 기록의 이름(카드 안의 인물이면 그 인물) → '캐릭터'. */
+export function summaryTitle(sessionsByTest, name) {
+    const given = String(name ?? '').trim();
+    const n = given || String(doneSessions(sessionsByTest).find(s => s.name)?.name || '').trim() || '캐릭터';
+    return `[${n} 심리검사 요약]`;
+}
 
 /** 모든 끝난 검사를 합친 조각. */
 export function collectLines(sessionsByTest, opts = {}) {
@@ -97,10 +103,10 @@ export function collectLines(sessionsByTest, opts = {}) {
 }
 
 /** 카드·로어북에 붙여 넣는 공유용 요약. 끝난 검사만 넣는다. */
-export function shareText(sessionsByTest) {
+export function shareText(sessionsByTest, name) {
     const { react, skip, direction, shape, splitsByAxis } = collectLines(sessionsByTest);
     const bullets = (list, empty) => list.length ? list.map(l => `- ${l}`) : [`- ${empty}`];
-    const lines = ['[캐릭터 심리검사 요약]'];
+    const lines = [summaryTitle(sessionsByTest, name)];
     lines.push('[가치관 — 반응하는 일]', ...bullets([...react, ...direction], '(가치관 검사 전)'));
     lines.push('[가치관 — 넘어가는 일]', ...bullets(skip, '(가치관 검사 전)'));
     if (splitsByAxis.values.length) lines.push('[가치관 — 갈리는 곳]', ...bullets(splitsByAxis.values));
@@ -114,11 +120,11 @@ export function shareText(sessionsByTest) {
  * GID(판단 프리셋)용 요약 (0.6.1, 사용자 확정 형식). 같은 내용을 프리셋이 한 줄씩 조건 판정할 수 있는 모양으로:
  *   줄마다 빈 줄(1A가 빈 줄 기준으로 문단을 나누므로 한 줄 = 판정 단위 하나), 줄 앞에 "[축 - 칸]" 접두(칸 제목이 따로 떨어져도 어느 칸 줄인지 알게),
  *   ※ 문구 없음(카드 안에서 "구속력 없음"으로 읽혀서), 갈리는 곳·가치 방향에 기움 화살표 없음.
- * 끝난 검사만. 아무것도 없으면 제목 줄만.
+ * 끝난 검사만. 아무것도 없으면 제목 줄만. 제목 줄은 "[〈이름〉 심리검사 요약]" — 접두가 [가치관 - / [성격유형 - 가 아니라 프리셋에서 검사 줄(P)이 아닌 일반 문단으로 읽힌다.
  */
-export function gidText(sessionsByTest) {
+export function gidText(sessionsByTest, name) {
     const { react, skip, direction, shape, splitsByAxis } = collectLines(sessionsByTest, { plain: true });
-    const lines = ['[캐릭터 심리검사 요약]'];
+    const lines = [summaryTitle(sessionsByTest, name)];
     const put = (prefix, list) => { for (const l of list) lines.push(`[${prefix}] ${l}`); };
     put('가치관 - 반응하는 일', react);
     put('가치관 - 넘어가는 일', skip);
