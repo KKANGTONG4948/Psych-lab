@@ -8,7 +8,7 @@
 //   · 모델은 자료에 근거가 있는 칸만 high/mid/low로 답하고, 없으면 unknown. 전형 글을 줬을 때만 typical_high/typical_low를 허용한다.
 //   · 전형 표(ARCHETYPES)는 확장이 갖고 있다. 미리 정한 전형이면 모델이 unknown으로 둔 칸을 표대로 채운다. 약간 = 센 것 3칸, 뚜렷 = 표 전부.
 //   · 겹치지 않게는 모델에게 맡기지 않는다. 사용자가 붙여 넣은 기존 인물의 세 줄을 확장이 파싱해서, 남은 칸을 그들과 다른 쪽으로 채운다(최대 4칸).
-// 결과는 세 줄: [이름] 자리·말투 / 가치관: … / 성격: …  — 로어북 항목 하나에 60~90토큰.
+// 결과는 제목 줄 + 세 줄: [이름 심리검사 요약] / [이름] 자리·말투 / 가치관: … / 성격: …  — 로어북 항목 하나에 70~100토큰.
 // 0.6.2: 같은 라벨을 GID용(문장, 줄마다 빈 줄, [축 - 칸] 접두)으로도 낸다 — 본 캐릭터 요약과 같은 모양이라 프리셋이 같은 규칙으로 읽는다. 200~300토큰.
 // 로어북에 자동으로 넣지 않는다. 복사만.
 import { MFQ2 } from './tests/mfq2.js';
@@ -237,18 +237,20 @@ export function higherOrder(labels) {
 /** 화면·글 공용 구조. values/personality = [{ id, tag, tokens: [{ id, name, level }], extra }] — 라벨이 하나도 없는 묶음은 뺀다. */
 export function npcStructure({ name, role, speech, labels }) {
     const sentence = x => { const t = String(x || '').trim(); return t ? t.replace(/[.。]?$/, '.') : ''; };
+    const title = `[${name} 심리검사 요약]`;   // 0.6.4(사용자 요청 "npc랑 모두"): 본 캐릭터 요약과 같은 제목 줄 — 프리셋이 누구 검사인지 문맥으로 알아보게
     const line1 = `[${name}] ${sentence(role)}${speech ? ` 말투: ${sentence(speech)}` : ''}`.trim();
     const axis = ax => GROUPS.filter(g => g.axis === ax).map(g => {
         const pick = lv => g.keys.filter(k => labels[`${g.id}.${k.key}`] === lv).map(k => ({ id: `${g.id}.${k.key}`, name: k.name, level: lv }));
         const h = g.id === 'schwartz' ? higherOrder(labels) : null;
         return { id: g.id, tag: g.tag, tokens: [...pick('high'), ...pick('low')], extra: h ? `${h.top.name} > ${h.bottom.name}` : null };
     }).filter(g => g.tokens.length || g.extra);
-    return { line1, values: axis('values'), personality: axis('personality') };
+    return { title, line1, values: axis('values'), personality: axis('personality') };
 }
 const axisText = groups => groups.length ? groups.map(g => `${[g.tokens.map(t => `${t.name}${arrow(t.level)}`).join(' '), g.extra].filter(Boolean).join(' · ')} (${g.tag})`).join(' · ') : '뚜렷한 쪽 없음';
+/** 짧은 판: 제목 줄 + 세 줄([이름] 자리·말투 / 가치관 / 성격). */
 export function npcLines(npc) {
     const s = npcStructure(npc);
-    return [s.line1, `가치관: ${axisText(s.values)}`, `성격: ${axisText(s.personality)}`];
+    return [s.title, s.line1, `가치관: ${axisText(s.values)}`, `성격: ${axisText(s.personality)}`];
 }
 export const npcText = npc => npcLines(npc).join('\n');
 
@@ -266,10 +268,10 @@ const DETAIL = (() => {
     for (const x of VIA.domains) d[`via.${x.id}`] = { gloss: x.gloss };
     return Object.freeze(d);
 })();
-/** GID용 줄 배열. [0] = 첫 줄(이름·자리·말투), 나머지는 "[축 - 칸] …". 라벨이 전부 중간이면 첫 줄만. */
+/** GID용 줄 배열. [0] = 제목 "[이름 심리검사 요약]", [1] = 첫 줄(이름·자리·말투), 나머지는 "[축 - 칸] …". 라벨이 전부 중간이면 제목·첫 줄만. */
 export function npcGidLines(npc) {
     const s = npcStructure(npc);
-    const out = [s.line1];
+    const out = [s.title, s.line1];
     const react = [], skip = [], shape = [];
     for (const k of KEYS) {
         const lv = npc.labels?.[k.id]; if (lv !== 'high' && lv !== 'low') continue;
@@ -307,8 +309,10 @@ export function parseCode(text) {
     while ((m = tail.exec(t))) { const id = TAG_EN_TO_ID.get(`${m[1]} ${m[2]}`); if (!id) continue; labels[id] = m[3] === '낮음' ? 'low' : 'high'; n++; }
     if (!n) return null;
     for (const k of KEYS) labels[k.id] ||= 'mid';
-    const nm = /^\s*\[([^\]\n]{1,60})\]/.exec(t);
-    return { name: nm ? nm[1].trim() : '(이름 없음)', labels, count: n };
+    // 이름: 제목 줄 "[이름 심리검사 요약]"은 건너뛰고 "[이름] …" 줄에서. "[이름] …" 줄이 없으면(본 캐릭터 요약) 제목 줄의 이름.
+    const title = /^\s*\[([^\]\n]{1,60}?)\s*심리검사 요약\]/.exec(t);
+    const nm = /^\s*\[(?!가치관 - |성격유형 - )([^\]\n]{1,60})\]/.exec(title ? t.slice(title[0].length) : t);   // 검사 줄 접두는 이름이 아님
+    return { name: nm ? nm[1].trim() : title ? title[1].trim() : '(이름 없음)', labels, count: n };
 }
 
 // ───────────────────────── 뽑기 (모델 호출 1번 + 재시도) ─────────────────────────

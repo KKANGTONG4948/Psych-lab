@@ -285,12 +285,13 @@ test('NPC 뽑기(0.5.0): 라벨 어휘 28개·검증·채우기 순서·세 줄�
     assert.equal(Object.values(f4.source).filter(x => x === 'archetype').length, 3);
     // 세 줄: 높/낮만, 묶음 꼬리표, 4방향은 양쪽 다 기울 때만, 빈 축은 "뚜렷한 쪽 없음"
     const lines = npc.npcLines({ name: '모르간', role: '상인 길드장', speech: '존댓말', labels: f.labels });
-    assert.equal(lines[0], '[모르간] 상인 길드장. 말투: 존댓말.');
-    assert.match(lines[1], /^가치관: 비례↑ .*\(MFQ-2\) · .*권력↑.*\(Schwartz\)$/); assert.match(lines[2], /^성격: 성실성↑ 우호성↓ \(Big Five\) · 꾸밈 없음↓ 탐욕 회피↓ \(HEXACO\) · 감사↓ \(VIA\)$/);
-    assert.equal(npc.npcLines({ name: 'x', role: 'r', speech: '', labels: Object.fromEntries(npc.KEYS.map(k => [k.id, 'mid'])) })[1], '가치관: 뚜렷한 쪽 없음');
+    assert.equal(lines[0], '[모르간 심리검사 요약]', '0.6.4: 제목 줄(본 캐릭터 요약과 같은 모양)'); assert.equal(lines[1], '[모르간] 상인 길드장. 말투: 존댓말.');
+    assert.match(lines[2], /^가치관: 비례↑ .*\(MFQ-2\) · .*권력↑.*\(Schwartz\)$/); assert.match(lines[3], /^성격: 성실성↑ 우호성↓ \(Big Five\) · 꾸밈 없음↓ 탐욕 회피↓ \(HEXACO\) · 감사↓ \(VIA\)$/);
+    assert.equal(npc.npcLines({ name: 'x', role: 'r', speech: '', labels: Object.fromEntries(npc.KEYS.map(k => [k.id, 'mid'])) })[2], '가치관: 뚜렷한 쪽 없음');
     assert.equal(npc.higherOrder({ ...Object.fromEntries(npc.KEYS.map(k => [k.id, 'mid'])), 'schwartz.power': 'high' }), null, '한쪽만 기울면 4방향 생략');
     assert.equal(npc.higherOrder({ ...Object.fromEntries(npc.KEYS.map(k => [k.id, 'mid'])), 'schwartz.power': 'high', 'schwartz.tradition': 'low' }).top.name, '자기 고양');
-    assert.ok(npc.parseCode(npc.npcLines({ name: 'y', role: 'r', speech: '', labels: f.labels }).join('\n')).count === Object.values(f.labels).filter(v => v !== 'mid').length, '만든 세 줄은 그대로 되읽힌다');
+    const rb = npc.parseCode(npc.npcLines({ name: 'y', role: 'r', speech: '', labels: f.labels }).join('\n'));
+    assert.ok(rb.count === Object.values(f.labels).filter(v => v !== 'mid').length && rb.name === 'y', '만든 세 줄은 그대로 되읽힌다(제목 줄 건너뛰고 [이름] 줄에서 이름)');
     assert.equal(npc.parseCode('계산적인 상인'), null);
     // 로그: 숨긴 메시지 제외, 태그 벗김, 뒤에서부터 글자 수 한도
     const prevCtx = globalThis.SillyTavern.getContext;
@@ -409,8 +410,9 @@ test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반�
     const rec = { name: '진지명', role: '36세의 무뚝뚝하고 거친 남성, 진소화의 아버지', speech: '낮고 쉰 목소리로 툭 내뱉는 짧은 반말', labels };
     const g = npc.npcGidText(rec);
     const lines = g.split('\n\n');
-    assert.equal(lines[0], '[진지명] 36세의 무뚝뚝하고 거친 남성, 진소화의 아버지. 말투: 낮고 쉰 목소리로 툭 내뱉는 짧은 반말.', '첫 줄 = 세 줄의 첫 줄과 같음(접두 없음 → 검사 줄 아님)');
-    assert.ok(lines.slice(1).every(l => /^\[(가치관 - (반응하는 일|넘어가는 일|가치 방향)|성격유형 - 반응 모양)\] \S/.test(l)), '나머지 줄 전부 접두: ' + lines.slice(1).find(l => !/^\[/.test(l)));
+    assert.equal(lines[0], '[진지명 심리검사 요약]', '0.6.4: 제목 줄에 이름');
+    assert.equal(lines[1], '[진지명] 36세의 무뚝뚝하고 거친 남성, 진소화의 아버지. 말투: 낮고 쉰 목소리로 툭 내뱉는 짧은 반말.', '첫 줄 = 세 줄의 첫 줄과 같음(접두 없음 → 검사 줄 아님)');
+    assert.ok(lines.slice(2).every(l => /^\[(가치관 - (반응하는 일|넘어가는 일|가치 방향)|성격유형 - 반응 모양)\] \S/.test(l)), '나머지 줄 전부 접두: ' + lines.slice(2).find(l => !/^\[/.test(l)));
     assert.ok(!lines.some(l => l.includes('\n')) && !g.includes('※') && !/[↑↓]/.test(g), '줄 안 줄바꿈·※·화살표 없음');
     // 가치관: 높음 → 반응하는 일 "장면: 반응 (이론 EN 중시)", 낮음 → 넘어가는 일 "(… 낮음)"; 검사 정의의 문장 그대로
     assert.ok(lines.includes('[가치관 - 반응하는 일] 스스로 정하고 자기 방식대로 할 자유가 막히는 장면: 답답해하고 자기 방식을 지키려 한다 (Schwartz Self-Direction 중시)'), g);
@@ -420,10 +422,10 @@ test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반�
     assert.ok(lines.includes('[성격유형 - 반응 모양] 조용하고 혼자 있는 쪽을 택한다 (Big Five Extraversion 낮음)'), g);
     assert.ok(lines.includes('[성격유형 - 반응 모양] 아첨하거나 연기하지 않고 있는 그대로 군다 (HEXACO Sincerity 높음)'), g);
     assert.ok(lines.includes('[성격유형 - 반응 모양] 농담을 잘 안 하고, 남을 웃기려 애쓰지 않는다 (VIA Humor 낮음)'), g);
-    // 중간은 안 적음: 라벨 9개 + 가치 방향 1 + 첫 줄 1
-    assert.equal(lines.length, 11, g);
+    // 중간은 안 적음: 라벨 9개 + 가치 방향 1 + 제목·첫 줄 2
+    assert.equal(lines.length, 12, g);
     // 칸 순서 고정: 반응 → 넘어감 → 방향 → 성격
-    const order = lines.slice(1).map(l => /^\[([^\]]+)\]/.exec(l)[1]); const idx = k => order.indexOf(k);
+    const order = lines.slice(2).map(l => /^\[([^\]]+)\]/.exec(l)[1]); const idx = k => order.indexOf(k);
     assert.ok(idx('가치관 - 반응하는 일') < idx('가치관 - 넘어가는 일') && idx('가치관 - 넘어가는 일') < idx('가치관 - 가치 방향') && idx('가치관 - 가치 방향') < idx('성격유형 - 반응 모양'));
     // 본 캐릭터 GID용과 같은 접두·꼬리 모양(프리셋이 같은 규칙으로 읽는다)
     const { TESTS } = await import('../tests/registry.js');
@@ -432,10 +434,10 @@ test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반�
     const mains = [mkAll((t, i) => (hash(i.id) % (t.scale.max - t.scale.min + 1)) + t.scale.min), mkAll(t => t.scale.max), mkAll(t => t.scale.min)].map(gidText);
     const main = mains[0];
     const shapeOf = l => l.replace(/^\[([^\]]+)\] .* \(([A-Za-z0-9\- ]+?) [A-Za-z\- ]+ (중시|낮음|높음)[^)]*\)$/, '[$1] … ($2 EN $3)');
-    const npcShapes = new Set(lines.slice(1).filter(l => !/가치 방향/.test(l)).map(shapeOf)), mainShapes = new Set(mains.flatMap(m => m.split('\n\n').slice(1)).filter(l => /중시|낮음|높음/.test(l)).map(shapeOf));
+    const npcShapes = new Set(lines.slice(2).filter(l => !/가치 방향/.test(l)).map(shapeOf)), mainShapes = new Set(mains.flatMap(m => m.split('\n\n').slice(1)).filter(l => /중시|낮음|높음/.test(l)).map(shapeOf));
     for (const s of npcShapes) assert.ok(mainShapes.has(s), '본 캐릭터 요약에도 있는 틀: ' + s + ' / ' + [...mainShapes].join(' | '));
-    // 전부 중간이면 첫 줄만
-    assert.equal(npc.npcGidText({ name: 'x', role: 'r', speech: '', labels: mid }), '[x] r.');
+    // 전부 중간이면 제목·첫 줄만
+    assert.equal(npc.npcGidText({ name: 'x', role: 'r', speech: '', labels: mid }), '[x 심리검사 요약]\n\n[x] r.');
     // 되읽기: GID용 글도 "겹치지 않게" 칸에 붙여 넣으면 같은 라벨로 읽힌다 (세 줄과 동일)
     const back = npc.parseCode(g);
     assert.equal(back.name, '진지명'); assert.equal(back.count, 9);
@@ -443,5 +445,6 @@ test('NPC GID용(0.6.2, B안): 첫 줄은 접두 없음, 라벨을 장면·반�
     // 본 캐릭터의 GID용 요약을 붙여 넣어도 읽힌다(뚜렷·세부 꼬리 포함)
     const mb = npc.parseCode(main);
     assert.ok(mb && mb.count > 0 && Object.values(mb.labels).some(v => v !== 'mid'), '본 캐릭터 GID용 되읽기');
+    assert.equal(npc.parseCode(gidText(Object.fromEntries(TESTS.map(t => [t.id, { testId: t.id, status: 'done', answers: t.items.map(i => ({ itemId: i.id, score: t.scale.max, reason: 'r' })) }])), '타카모리 스즈네')).name, '타카모리 스즈네', '본 캐릭터 GID용은 제목 줄에서 이름');
     assert.equal(npc.parseCode('(Schwartz 4방향) 아무것도'), null, '방향 줄만으로는 라벨 없음');
 });

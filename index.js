@@ -8,7 +8,7 @@ import { STRENGTH_LABEL, LEVEL_LABEL, DOMAIN_LEVEL_LABEL } from './scoring.js';
 import { resultOf, shareText, gidText, sourceCredit, overview, byAxis, collectLines } from './summary.js';
 import { ARCHETYPES, STRENGTH, KEY_BY_ID, hasChat, listNpcs, getNpcRecord, deleteNpcRecord, loadDraft, saveDraft, chatLog, buildNpcMessages, estimateTokens, generateNpc, editNpcRecord, npcStructure, npcText, npcGidText, parseCode } from './npc.js';
 
-const VERSION = '0.6.3';
+const VERSION = '0.6.4';
 const ROOT_ID = 'psych_lab_root';
 const ctx = () => SillyTavern.getContext();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -573,6 +573,7 @@ function renderNpcResult(t) {
         el('section', { class: 'pl-card' },
             el('h2', { class: 'pl-h2' }, `${r.name} · 뽑은 결과`, el('span', { class: 'pl-h2-sub' }, meta)),
             el('div', { class: 'pl-share pl-prose', id: 'pl_npc_lines' },
+                el('div', {}, st.title),
                 el('div', {}, st.line1),
                 el('div', {}, '가치관: ', ...axisNodes(st.values)),
                 el('div', {}, '성격: ', ...axisNodes(st.personality))),
@@ -589,7 +590,7 @@ function renderNpcResult(t) {
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: editFirst }, '첫 줄 고치기'),
                 el('button', { class: 'pl-btn pl-btn-danger', type: 'button', onclick: remove }, '지우기'),
                 el('button', { class: 'pl-btn pl-btn-ghost', type: 'button', onclick: () => go('npc') }, '새로 뽑기')),
-            el('span', { class: 'pl-help' }, `세 줄은 약 ${Math.ceil(npcText(r).length / 2).toLocaleString()}토큰, GID용은 약 ${Math.ceil(npcGidText(r).length / 2).toLocaleString()}토큰(어림). 로어북 항목의 키워드는 이름(${r.name})으로 두면 돼요 — 상시(🔵) 말고. 복사하면 밑줄 없이 글만 가요.`),
+            el('span', { class: 'pl-help' }, `세 줄(제목 줄 포함)은 약 ${Math.ceil(npcText(r).length / 2).toLocaleString()}토큰, GID용은 약 ${Math.ceil(npcGidText(r).length / 2).toLocaleString()}토큰(어림). 둘 다 첫 줄이 "[${r.name} 심리검사 요약]"이라 프리셋이 누구 검사인지 알아요. 로어북 항목의 키워드는 이름(${r.name})으로 두면 돼요 — 상시(🔵) 말고. 복사하면 밑줄 없이 글만 가요.`),
             el('details', { class: 'pl-share-details' },
                 el('summary', { class: 'pl-help' }, 'GID용 미리 보기 — 같은 라벨을 문장으로. 줄마다 빈 줄, [축 - 칸] 접두. 판단 프리셋(GID)이 본 캐릭터 요약과 같은 규칙으로 읽어요. 첫 줄은 접두가 없어서 검사 줄이 아니라 이 인물의 일반 설명이에요.'),
                 el('pre', { class: 'pl-share', id: 'pl_npc_gid_preview' }, npcGidText(r))),
